@@ -2,13 +2,25 @@
 
 Benchmark plots and performance analysis for kernel development and upstream contributions to [`pto-kernels`](https://github.com/huawei-csl/pto-kernels).
 
-This repository collects plotting scripts, generated figures, and experiment organization used to evaluate custom Ascend NPU kernels during development.  
-The goal is simple: do not just claim a kernel is faster — measure it, compare it properly, and make the result easy to inspect.
+This repository contains plotting scripts, generated figures, and experiment organization used to evaluate custom Ascend NPU kernels during development and pull request review.
+
+## Example result
+
+![PTO-ISA vs AscendC speedup heatmap for Hadamard+Quant](fast_hadamard/hadamard_quant_speedup_heatmap_new.png)
+
+Median PTO-ISA speedup over AscendC for Hadamard + Quant across batch size and row length.  
+Blue means PTO-ISA is faster, red means AscendC is faster, and each cell shows the measured speedup ratio.
+
+### Matmul runtime comparison
+
+![Runtime comparison for matmul swizzle experiment on 910B2](matmul_swizzle/comparison_910B2_stepsize_128.png)
+
+Runtime comparison across different values of `M` for `N=4096, K=4096`, showing `torch`, `custom`, and `original` implementations.  
+This figure is useful for inspecting how the optimized implementation behaves relative to both a baseline implementation and a framework reference across the sweep.
 
 ## Why this repo exists
 
-During kernel development, benchmark results and comparison plots tend to get buried inside pull requests, local notebooks, or one-off scripts.  
-This repository keeps that work in one place and documents the performance side of my upstream contributions.
+During kernel development, benchmark results and comparison plots often end up scattered across pull requests, local notebooks, and one-off scripts. This repository keeps that work in one place and documents the performance side of my upstream contributions.
 
 In particular, it supports experiments related to:
 
@@ -30,43 +42,13 @@ This repo accompanies public contribution work to [`huawei-csl/pto-kernels`](htt
 The repository is organized by experiment family:
 
 - `fast_hadamard/`  
-  Plots and comparison artifacts for fused / unfused Fast Hadamard and quantization workflows.
+  Plots and comparison artifacts for fused and unfused Fast Hadamard and quantization workflows.
 
 - `matmul_swizzle/`  
   Performance plots for matmul kernels, including locality-aware and baseline comparisons.
 
 - `block_rotate_fp16/`  
   Plots and related artifacts for additional kernel experiments.
-
-Depending on the experiment, folders may contain:
-- plotting scripts
-- generated figures
-- raw or processed CSV benchmark outputs
-- small helper utilities for result aggregation
-
-## What these plots are used for
-
-The plots in this repo are meant to answer practical development questions such as:
-
-- Is the fused kernel actually faster than the separate implementation?
-- How does a custom PTO-ISA kernel compare against framework or vendor baselines?
-- Does the optimization hold across shape ranges, or only on a narrow sweet spot?
-- Are we improving runtime, effective bandwidth, or both?
-- Did a “clever” change actually help, or did it just make the code more annoying?
-
-## Benchmarking approach
-
-The exact methodology depends on the kernel, but the general workflow is:
-
-1. run benchmark scripts in the corresponding `pto-kernels` experiment directory
-2. collect runtime / bandwidth / throughput results in CSV form
-3. generate comparison plots
-4. use the plots to validate optimizations and summarize PR results
-
-Where possible, comparisons are made against:
-- previous PTO-ISA implementations
-- fused vs. unfused versions
-- framework or vendor-provided baselines
 
 ## Repository structure
 
@@ -76,3 +58,16 @@ pto-kernels-plots/
 ├── fast_hadamard/
 ├── matmul_swizzle/
 └── README.md
+```
+## Notes
+
+This is a support repository for performance analysis, not a standalone kernel library.
+The actual kernel implementations live in pto-kernels and related development branches.
+
+The main purpose of this repo is to make benchmarking work visible and reproducible instead of leaving it trapped inside pull request comments and local output folders.
+
+##Author
+
+Hyun-Min Chang \
+MSc EE/IT, ETH Zürich \
+AI Research Intern at Huawei Research Center Switzerland
