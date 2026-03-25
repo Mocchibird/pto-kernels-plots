@@ -35,6 +35,8 @@ Median PTO-ISA speedup over AscendC for the fused Hadamard + INT8 quantization k
 
 ---
 
+---
+
 ### `hadamard_quant_speedup_vs_separate_bd20.png`
 
 ![Fused PTO Speedup over Separate PTO (BLOCK_DIM=20)](hadamard_quant_speedup_vs_separate_bd20.png)
@@ -93,3 +95,30 @@ median over trials.
   N values, suggesting AscendC is marginally better tuned there.
 - The standalone quantize step does not benefit meaningfully from PTO-ISA on its own;
   the speedup from the fused kernel comes from combining it with the Hadamard pass.
+
+---
+
+### `hadamard_quant_old_vs_new_heatmap.png`
+
+![New PTO vs Old PTO for Hadamard+Quant](hadamard_quant_old_vs_new_heatmap.png)
+
+Speedup of the **new** PTO-ISA fused Hadamard+Quant kernel over the **old** PTO-ISA
+version (log2 scale). Only the Hadamard transform portion was updated; the quantization
+path is unchanged. Blue = new faster (better), red = old faster (worse).
+
+**What the plot shows:**
+
+- At **small batch sizes (1–64)**, performance is essentially unchanged: speedup
+  hovers around **1.0x** across all N values. The new Hadamard implementation does not
+  regress for lightweight workloads.
+- At **large batch sizes (128–1024)**, the new kernel delivers a clear and consistent
+  speedup. The advantage grows with batch, reaching an average of roughly **~1.3x**
+  for batch ≥ 256 and peaking at **1.85x** (batch=1024, N=512).
+- The speedup is most pronounced at **small-to-moderate N (128–2048)** combined with
+  large batch, where the new batched Hadamard template processes multiple rows per
+  tile load — exactly the regime where the old per-row fallback was least efficient.
+- At **N=16384**, the new kernel is consistently **1.2–1.4x** faster across all batch
+  sizes, reflecting improved instruction scheduling even at the largest row widths.
+- A handful of cells show slight regressions (0.85–0.95x) at batch=256 with small N,
+  likely due to tile size and alignment trade-offs in the UB layout. These are minor
+  compared to the gains elsewhere.
