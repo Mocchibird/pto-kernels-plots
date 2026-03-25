@@ -37,8 +37,7 @@ Runtime (μs) vs M for M ∈ [128, 4096] at step size 128, on Ascend 910B2.
 - The `custom` kernel (blue solid) closely follows `torch` (black dashed) throughout
   the sweep. Both grow nearly linearly with M.
 - At large M, `custom` is consistently about **20–30% above torch**, which likely
-  reflects kernel launch overhead or tiling inefficiency that torch's cuBLAS/hccl
-  backend avoids rather than a cache problem.
+  reflects kernel launch overhead or tiling inefficiency.
 - **Conclusion:** the swizzle optimization fully eliminates the cache-thrash pathology
   of the original, bringing runtime in line with the framework baseline.
 
