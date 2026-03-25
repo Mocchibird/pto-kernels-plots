@@ -4,7 +4,7 @@ Benchmark plots and performance analysis for kernel development and upstream con
 
 This repository contains plotting scripts, generated figures, and experiment organization used to evaluate custom Ascend NPU kernels during development and pull request review.
 
-## Example result
+## Example results
 
 ![PTO-ISA vs AscendC speedup heatmap for Hadamard+Quant](fast_hadamard/hadamard_quant_speedup_heatmap_new.png)
 
@@ -66,7 +66,7 @@ The actual kernel implementations live in pto-kernels and related development br
 
 The main purpose of this repo is to make benchmarking work visible and reproducible instead of leaving it trapped inside pull request comments and local output folders.
 
-##Author
+## Author
 
 Hyun-Min Chang \
 MSc EE/IT, ETH Zürich \
