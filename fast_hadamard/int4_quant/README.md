@@ -25,15 +25,11 @@ NPU hardware profiler traces for a single FHT kernel execution.
 
 **What the traces show:**
 
-- The **old kernel** (16.4 μs) has a nearly continuous FLOWCTRL bar, indicating high
-  branching overhead throughout execution. MTE2 (memory load) activity is sparse, and
-  CACHEMISS events are visible, pointing to poor data locality and incomplete pipelining
-  between load and compute units.
-- The **new kernel** (9.5 μs) shows dense, well-structured VECTOR and MTE2 activity
-  that overlap cleanly across the execution window. FLOWCTRL traffic is sparse, and
-  there are no visible cache miss events.
+- The **old kernel** (16.4 μs) has way higher `SCALAR` core activity with almost no large gaps between them, indicating high
+  branching overhead throughout execution. The same activity pattern can be seen on the `VECTOR` core
+- The **new kernel** (9.5 μs) sparser `SCALAR` core activity in addition to longer stretches of continuous `VECTOR` core activity.
 - The new algorithm achieves a **~1.72x** reduction in execution time at this shape
-  through improved pipeline overlap and cache-friendly access patterns.
+  through improved pipeline overlap.
 
 ---
 
