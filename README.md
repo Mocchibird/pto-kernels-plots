@@ -6,7 +6,7 @@ This repository contains plotting scripts, generated figures, and experiment org
 
 ## Example results
 
-![PTO-ISA vs AscendC speedup heatmap for Hadamard+Quant](fast_hadamard/hadamard_quant_speedup_heatmap_new.png)
+![PTO-ISA vs AscendC speedup heatmap for Hadamard+Quant](fast_hadamard/int8_quant/hadamard_quant_speedup_heatmap_new.png)
 
 Median PTO-ISA speedup over AscendC for Hadamard + Quant across batch size and row length.  
 Blue means PTO-ISA is faster, red means AscendC is faster, and each cell shows the measured speedup ratio.
