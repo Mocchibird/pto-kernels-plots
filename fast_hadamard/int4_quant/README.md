@@ -37,7 +37,7 @@ NPU hardware profiler traces for a single FHT kernel execution.
 
 ---
 
-## Benchmark plots
+## Benchmark plots (Old Hadamard)
 
 ### `fused_vs_unfused_duration_bd24.png`
 
