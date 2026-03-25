@@ -1,19 +1,21 @@
 # Fast Hadamard + INT4 Dynamic Quantization (Fused)
 
 Fused PTO-ISA kernel that performs the Fast Hadamard Transform (FHT) and dynamic INT4
-quantization in a single pass. Three unfused baselines are used for comparison, each
+quantization in a single pass. 
+
+**UPDATE**: Revised Hadamard Kernel Profiling comparing the old against the new kernel
+
+*The following are still with the Old Hadamard Kernel*\
+Three unfused baselines are used for comparison, each
 pairing the standalone PTO-ISA Hadamard kernel with a different NPU quantize operator:
 
 - `Hadamard + npu_quantize` — static-scale INT4 quantize
 - `Hadamard + npu_dynamic_quant` — dynamic symmetric INT4 quantize
 - `Hadamard + npu_dynamic_quant_asymmetric` — dynamic asymmetric INT4 quantize
-
-The profiler trace images document the internal pipeline structure of the old vs new
-Hadamard algorithm used inside the fused kernel.
-
+- 
 ---
 
-## Profiler traces
+## **UPDATE**: Profiler traces
 
 ### `new hadamard.png` vs `old hadamard.png`
 
