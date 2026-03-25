@@ -21,7 +21,7 @@ pairing the standalone PTO-ISA Hadamard kernel with a different NPU quantize ope
 
 | New (9.5 μs) | Old (16.4 μs) |
 |---|---|
-| ![new](new%20hadamard.png) | ![old](old%20hadamard.png) |
+| ![new](new_hadamard_profiling.png) | ![old](old_hadamard_profiling.png) |
 
 NPU hardware profiler traces for a single FHT kernel execution.
 
@@ -34,6 +34,13 @@ NPU hardware profiler traces for a single FHT kernel execution.
   through improved pipeline overlap.
 
 ---
+## Runtime Comparison
+
+### `runtime_comparison_new_hadamard.png` vs `runtime_comparison_old_hadamard.png`
+| New | Old|
+|---|---|
+| ![new](runtime_comparison_new_hadamard.png) | ![old](runtime_comparison_old_hadamard.png) |
+
 
 ## Benchmark plots (Old Hadamard)
 
