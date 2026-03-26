@@ -3,6 +3,8 @@
 Fused PTO-ISA kernel that performs the Fast Hadamard Transform (FHT) and dynamic INT4
 quantization in a single pass. 
 
+**UPDATE**: UB Copy vs Hadamard — compute is free at typical serving shapes
+
 **UPDATE**: Revised Hadamard Kernel Profiling comparing the old against the new kernel
 
 *The following are still with the Old Hadamard Kernel*\
@@ -13,6 +15,37 @@ pairing the standalone PTO-ISA Hadamard kernel with a different NPU quantize ope
 - `Hadamard + npu_dynamic_quant` — dynamic symmetric INT4 quantize
 - `Hadamard + npu_dynamic_quant_asymmetric` — dynamic asymmetric INT4 quantize
 - 
+---
+
+## **UPDATE**: UB Copy vs Hadamard — Compute Hidden Behind DMA
+
+### `copy_vs_hadamard.png`
+
+![UB Copy vs Hadamard — Latency](copy_vs_hadamard.png)
+
+### `copy_vs_hadamard_bw.png`
+
+![UB Copy vs Hadamard — Bandwidth](copy_vs_hadamard_bw.png)
+
+To measure how much of the Hadamard kernel's runtime is actual compute vs DMA overhead,
+we built a **UB Copy** baseline kernel: it uses the exact same double-buffered
+TLOAD/TSTORE pipeline (GM→UB→GM) as the Hadamard kernel but performs **zero compute** —
+data is loaded into UB and immediately stored back.
+
+**What the plots show:**
+
+- At batch ≤ 256 and N ≤ 16384 (the typical LLM serving regime), the Hadamard kernel
+  and the UB Copy kernel have **identical latency** (~48 μs). The Hadamard's radix-2
+  butterfly compute is entirely hidden behind the DMA transfers.
+- The bandwidth plot confirms both kernels achieve the same effective bandwidth
+  (~90–350 GB/s depending on shape), meaning the kernel is purely **DMA-bound** at
+  these sizes — compute is free.
+- This means the Hadamard kernel is already at **theoretical maximum performance** for
+  typical serving shapes: any further compute optimization (e.g. radix-4 butterfly)
+  would yield zero benefit, since compute is not on the critical path.
+- The compute overhead only becomes visible at larger batch sizes (≥1024) where the
+  data per tile exceeds what can be overlapped with the double-buffered pipeline.
+
 ---
 
 ## **UPDATE**: Profiler traces
