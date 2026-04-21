@@ -55,6 +55,29 @@ over batch size and matrix dimension on a log2 color scale.
 - At `batch=64, N=128` (the heaviest tested point), the kernel is still
   **10x** faster than PyTorch.
 
+### `sinkhorn_bandwidth_bd24.png`
+
+![Sinkhorn Effective Bandwidth](sinkhorn_bandwidth_bd24.png)
+
+Effective bandwidth (GB/s) for PTO-ISA vs PyTorch, shown per batch size with
+linear y-scale. Effective bandwidth is computed as `(read + write) / duration`,
+where both input and output are K×K fp16 matrices.
+
+**What the plot shows:**
+
+- The PTO-ISA kernel reaches up to **~35 GB/s** at `batch=64, N=128`,
+  while PyTorch stays below **~3.5 GB/s** across all shapes.
+- For small `N` (4-16), PTO-ISA bandwidth is low in absolute terms
+  (~0.01-1 GB/s) because the matrices are tiny (16-512 bytes each) and
+  kernel launch overhead dominates. But it's still 80-90x faster than
+  PyTorch, which suffers far more from per-op dispatch overhead.
+- Bandwidth scales linearly with both `N` and batch size, as expected:
+  larger matrices and larger batches amortize the fixed kernel launch cost
+  over more data.
+- PyTorch bandwidth is nearly invisible at small `N` because each
+  sinkhorn iteration triggers multiple separate NPU kernel launches
+  (softmax, sum, div), each with its own dispatch overhead.
+
 **Conclusion:** the PTO-ISA doubly-stochastic Sinkhorn kernel delivers
 large speedups over PyTorch for all tested shapes, with the biggest wins
 (80-91x) at the small matrix dimensions typical of DeepSeek MHC
