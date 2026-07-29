@@ -18,6 +18,7 @@
 - [N=256: the deinterleave-load kernel reaches copy speed](#n256-the-deinterleave-load-kernel-reaches-copy-speed)
 - [Measuring against the copy floor](#measuring-against-the-copy-floor)
 - [Pipeline depth and the UB budget](#pipeline-depth-and-the-ub-budget)
+- [Block size: how wide can one row be?](#block-size-how-wide-can-one-row-be)
 - [Correctness](#correctness)
 
 # Background: the WHT is memory-bound
@@ -94,6 +95,41 @@ Computing those offsets arithmetically instead of reading them from a table fixe
 | `NBUF=6` | 248 KB | 2622 GB/s | 2775 GB/s |
 
 Deeper is marginally **slower**, and the larger budget changes nothing measurable. That is what a memory-bound kernel should do: four buffers already keep the load and store pipes saturated, and beyond that point spare UB is just spare UB. The original conclusion — not worth pursuing — held up. The reason we had given for it did not.
+
+# Block size: how wide can one row be?
+
+`N` is a compile-time constant, and the deinterleave trick is not equally happy at every
+value of it. A stage splits the row into two half-rows of `N/2`; up to **N=256** each half
+is exactly one 128-element fp16 vector. Below that the vector is only partly filled — at
+N=32 seven eighths of every lane is wasted — and above it the row no longer fits, so it is
+processed as `CHUNKS = (N/2)/128` independent pieces.
+
+![block size vs the copy floor](hadamard_nsweep.png)
+
+Measured with the tile size and the total bytes moved held constant, so `N` is the only
+variable, and with the copy floor rebuilt at each `N` so every ratio is against its own
+DMA ceiling:
+
+| N | 32 | 64 | 128 | **256** | 512 | 1024 | 2048 |
+|---|---|---|---|---|---|---|---|
+| GB/s | 844 | 1348 | 2148 | **2657** | 2627 | 2613 | 2547 |
+| fraction of copy floor | 0.30 | 0.47 | 0.76 | **0.93** | 0.92 | 0.92 | 0.90 |
+
+The right-hand panel is the explanation: vector-op cost per element is `5·log2(N)/min(N, 512)`,
+which bottoms out exactly at N=256. Below it the kernel is vector-issue-bound; above it each
+doubling of N adds another butterfly stage over the same lanes. So N=256 is not an arbitrary
+choice — it is the one block size where the transform stops being compute-limited and starts
+being what it should be, a memory-bound copy with arithmetic hidden inside the DMA.
+
+One trap is worth recording, because it produced a *correct-looking* wrong answer. The
+obvious way to handle a wide row is to loop over chunks, loading and storing each in turn.
+That aliases: a stage's sums compact into the lower half of the row, which is exactly where
+a lower-numbered chunk still has to read from. At N=512 it nevertheless passed — the loads
+were reading input that the stores had not yet committed — and then corrupted at N=1024
+once the stores started landing in time. Forcing the stores to land turned the N=512 error
+from `8e-4` into `5.1`, which is how the aliasing was confirmed. The fix is to spread the
+unroll slots across `(row, chunk)` pairs so that every load in an iteration precedes every
+store; the hazard then cannot occur regardless of timing.
 
 # Correctness
 
