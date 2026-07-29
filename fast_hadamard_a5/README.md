@@ -12,7 +12,7 @@ only `vadd`/`vsub` touch the vector-execute pipe. The transform therefore runs a
 essentially DMA speed, and the natural reference is a plain GM→UB→GM **copy**.
 
 The benchmark sweeps **batch size** (`2^10 … 2^18` rows of 256) against the UB
-tiling knob **`ROWS_PER_TILE`** (`NBUF` auto-fit to the 192 KB UB), at
+tiling knob **`ROWS_PER_TILE`** (`NBUF` auto-fit to the UB budget), at
 `block_dim=64`. The plotted value is:
 
 ```text
@@ -23,6 +23,10 @@ Values near `1.0` mean the transform is running at the copy floor (optimal). The
 copy floor is measured from a fixed, UB-valid `ROWS_PER_TILE=64` build, taking the
 **median of 7 trials** per batch — this avoids the physically-impossible >HBM
 readings a single timed loop can produce. Bandwidth is `(read + write) / duration`.
+
+(Aside on UB: the A5 has 248 KB UB, but the kernel's per-buffer event-ID reuse
+caps stable pipeline depth at `NBUF≈4` — deeper device-faults — so UB capacity is
+not the limiter here; details in the main repo's `BENCHMARKS.md`.)
 
 ---
 
