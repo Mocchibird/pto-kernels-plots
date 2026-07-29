@@ -17,7 +17,7 @@
   - [3. Deinterleave-load: fold the butterfly into the DMA](#3-deinterleave-load-fold-the-butterfly-into-the-dma)
 - [N=256: the deinterleave-load kernel reaches copy speed](#n256-the-deinterleave-load-kernel-reaches-copy-speed)
 - [Measuring against the copy floor](#measuring-against-the-copy-floor)
-- [UB budget: building on the A2 (192 KB) code](#ub-budget-building-on-the-a2-192-kb-code)
+- [Pipeline depth and the UB budget](#pipeline-depth-and-the-ub-budget)
 - [Correctness](#correctness)
 
 # Background: the WHT is memory-bound
@@ -77,9 +77,23 @@ For a purely memory-bound op, "green everywhere" is the whole game — there is 
 
 Because the transform is memory-bound, we benchmark every kernel against a pure `GM → UB → GM` **copy** that uses the exact same tiling — the copy is the DMA ceiling for that shape, so it is the right thing to be judged against. The reported metric is `hadamard / copy` (median over several trials, `block_dim = 64`); a ratio near `1.0` means the transform is running at memory-copy speed. That is the yardstick behind every number in this post.
 
-# UB budget: building on the A2 (192 KB) code
+# Pipeline depth and the UB budget
 
-These kernels build on the Ascend A2 (910B) implementation, which targets a **192 KB** Unified Buffer. The A5 has a larger **248 KB** UB, so we tried adjusting the memory budget to take advantage of it — but the kernel produced runtime errors at the deeper pipeline configurations the extra space would enable. Since the transform is already essentially at copy speed, we decided not to pursue this further for now (the budget is left overridable via `UB_USABLE_BYTES` for a future revisit).
+These kernels were first written against the Ascend A2 (910B), whose Unified Buffer is **192 KB**. The A5's is **248 KB**, so the obvious question is whether the extra 56 KB buys anything — and for a while our answer was wrong in an instructive way.
+
+A larger budget lets the pipeline run deeper: `NBUF=6` instead of 4. The first time we tried it, the kernel died with device fault `507035`. We wrote that down as "the A5's extra UB isn't usable here" and moved on, since the transform was already at copy speed.
+
+It was never a UB problem. The kernel computed its per-buffer UB offsets by indexing a **fixed four-element table** with `K % NBUF`. At `NBUF=6` that reads two entries past the end of the array, so the DMA landed at a garbage offset — an out-of-bounds read wearing a hardware fault's clothing. The event-ID array beside it was correctly sized for eight, which is exactly why "we must have run out of event IDs" felt plausible and was still wrong.
+
+Computing those offsets arithmetically instead of reading them from a table fixes it, and then the real answer shows up:
+
+| pipeline depth | UB budget | batch 65536 | batch 262144 |
+|---|---|---|---|
+| `NBUF=4` | 192 KB | 2668 GB/s | 2795 GB/s |
+| `NBUF=6` | 192 KB | 2634 GB/s | 2769 GB/s |
+| `NBUF=6` | 248 KB | 2622 GB/s | 2775 GB/s |
+
+Deeper is marginally **slower**, and the larger budget changes nothing measurable. That is what a memory-bound kernel should do: four buffers already keep the load and store pipes saturated, and beyond that point spare UB is just spare UB. The original conclusion — not worth pursuing — held up. The reason we had given for it did not.
 
 # Correctness
 
