@@ -98,38 +98,61 @@ Deeper is marginally **slower**, and the larger budget changes nothing measurabl
 
 # Block size: how wide can one row be?
 
-`N` is a compile-time constant, and the deinterleave trick is not equally happy at every
-value of it. A stage splits the row into two half-rows of `N/2`; up to **N=256** each half
-is exactly one 128-element fp16 vector. Below that the vector is only partly filled — at
-N=32 seven eighths of every lane is wasted — and above it the row no longer fits, so it is
-processed as `CHUNKS = (N/2)/128` independent pieces.
+`N` is a compile-time constant, and one fp16 vector register holds 128 elements. A stage
+splits its work into two half-rows of `N/2`, so at **N=256** each half is exactly one full
+vector — and for a while that made N=256 look like a sweet spot with the curve falling away
+on both sides. It wasn't a sweet spot; it was the only size that happened to fit.
+
+Two changes make the vector full at every `N`. Above 256, a row is split into
+`CHUNKS = (N/2)/128` independent pieces. Below 256, `R = 256/N` **rows are packed into one
+window**, so a stage at N=32 drives all 128 lanes instead of 16. Packing works because a
+stage only pairs adjacent elements within a row: the split is on the low bit of the
+within-row index and `N` is even, so row `r`'s evens always land contiguously in group `r`
+and rows never mix.
+
+Packing does permute the result — a packed window emerges with its index **rotated right by
+log2(N)**. That sounds expensive and isn't: `vdintlv` rotates a whole 256-element
+(two-register) window right by one in a single register-to-register op, so `8 − log2(N)` of
+them finish the job, fused into the last stage using registers that are already dead. One op
+at N=128, three at N=32, against the 25–35 ops of butterfly they make possible.
 
 ![block size vs the copy floor](hadamard_nsweep.png)
 
-Measured with the tile size and the total bytes moved held constant, so `N` is the only
-variable, and with the copy floor rebuilt at each `N` so every ratio is against its own
-DMA ceiling:
-
-| N | 32 | 64 | 128 | **256** | 512 | 1024 | 2048 |
+| N | 32 | 64 | 128 | 256 | 512 | 1024 | 2048 |
 |---|---|---|---|---|---|---|---|
-| GB/s | 844 | 1348 | 2148 | **2657** | 2627 | 2613 | 2547 |
-| fraction of copy floor | 0.30 | 0.47 | 0.76 | **0.93** | 0.92 | 0.92 | 0.90 |
+| rows packed | 8 | 4 | 2 | 1 | 1 | 1 | 1 |
+| GB/s | 2712 | 2700 | 2691 | 2664 | 2624 | 2590 | 2554 |
+| fraction of copy floor | **0.96** | 0.94 | 0.94 | 0.94 | 0.92 | 0.91 | 0.90 |
+| before packing | 0.30 | 0.47 | 0.76 | 0.93 | 0.92 | 0.92 | 0.90 |
 
-The right-hand panel is the explanation: vector-op cost per element is `5·log2(N)/min(N, 512)`,
-which bottoms out exactly at N=256. Below it the kernel is vector-issue-bound; above it each
-doubling of N adds another butterfly stage over the same lanes. So N=256 is not an arbitrary
-choice — it is the one block size where the transform stops being compute-limited and starts
-being what it should be, a memory-bound copy with arithmetic hidden inside the DMA.
+The middle panel is now flat: **the transform is memory-bound at every size**, which is the
+result you want from a kernel whose arithmetic is a handful of adds. N=32 went from 0.30 to
+0.96 of its own DMA ceiling — measured in-process against the old kernel, +223%. N=128, the
+size that matters most in practice, gained +27% and comfortably clears the 2.03 TB/s cube
+kernel it used to lose to. The third panel is the reason the old curve sagged at small `N`
+and the new one doesn't: cost per element is now `(5·log2(N) + log2(R)) / 256`, which no
+longer blows up as `N` shrinks.
 
-One trap is worth recording, because it produced a *correct-looking* wrong answer. The
-obvious way to handle a wide row is to loop over chunks, loading and storing each in turn.
-That aliases: a stage's sums compact into the lower half of the row, which is exactly where
-a lower-numbered chunk still has to read from. At N=512 it nevertheless passed — the loads
-were reading input that the stores had not yet committed — and then corrupted at N=1024
-once the stores started landing in time. Forcing the stores to land turned the N=512 error
-from `8e-4` into `5.1`, which is how the aliasing was confirmed. The fix is to spread the
-unroll slots across `(row, chunk)` pairs so that every load in an iteration precedes every
-store; the hazard then cannot occur regardless of timing.
+The correctness evidence is worth stating precisely, because it is stronger than a
+tolerance. The packed kernel adds the *same operand-ordered pairs in the same stage order*
+as the per-row one, so its output should be **bit-identical**, not merely close — and it is,
+at every `N` from 32 to 2048. A relative-error check would have accepted a subtly wrong
+permutation; `torch.equal` does not.
+
+Two traps are recorded here because both produced *correct-looking* wrong answers rather
+than crashes. The first: handling a wide row with a per-chunk load/store loop aliases in
+place, because a stage's sums compact into the lower half of the row, which is exactly where
+a lower-numbered chunk still needs to read from. It passed at N=512 — the loads were reading
+input the stores had not yet committed — and corrupted at N=1024. Forcing the stores to land
+turned the N=512 error from `8e-4` into `5.1`, which is how it was confirmed. The second is
+the same shape one level up: doing the rotation through UB instead of in registers would
+re-read a just-written window and need an explicit barrier. Both are avoided structurally
+rather than by getting the timing lucky.
+
+Packing also creates one genuinely new hazard: at N=32 a window holds eight rows, and batch
+padding can occupy seven of them. "Rows never mix" says padding cannot contaminate real
+rows, so that gets asserted adversarially — fill the padding with `inf` and `nan` and require
+the real rows to come out bit-identical to an unpadded run.
 
 # Correctness
 
