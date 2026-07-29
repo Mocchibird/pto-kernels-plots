@@ -2,7 +2,7 @@
 
 - Author: Hyun-Min Chang
 
-**TL;DR**: The Walsh–Hadamard transform (WHT) is a **memory-bound** streaming op, so the right target is not peak FLOPs but *how close to a plain memory copy can we get*. On Ascend 950 / A5 (`dav-c310`) we built and benchmarked several fp16 WHT kernels in PTO-ISA. The **N=256 deinterleave-load** kernel reaches **~2.8 TB/s — essentially the HBM copy floor** (91–100% of copy across large batches). For **N=128**, offloading the transform to the **cube (matrix) unit** as a matmul (**2.03 TB/s**) beats both a deinterleave-load kernel (1.90) and a register-resident vector butterfly (1.51). Every kernel is verified correct (max rel error ~1e-3 vs the Sylvester reference).
+**TL;DR**: The Walsh–Hadamard transform (WHT) is a **memory-bound** streaming op, so the right target is not peak FLOPs but *how close to a plain memory copy can we get*. On Ascend 950 / A5 (`dav-c310`) we built and benchmarked several fp16 WHT kernels in PTO-ISA. The **N=256 deinterleave-load** kernel reaches **~2.8 TB/s — essentially the HBM copy floor** (91–100% of copy across large batches). For **N=128**, offloading the transform to the **cube (matrix) unit** as a matmul (**2.03 TB/s**) beats both a deinterleave-load kernel (1.90) and a register-resident vector butterfly (1.51). Every kernel is verified correct (max rel error ~1e-3 vs a PyTorch reference).
 
 **To reproduce everything in this post**, see:
 - Kernels, benchmarks, correctness tests: [`pto-kernels/examples/jit_cpp/fast_hadamard_a5`](https://github.com/huawei-csl/pto-kernels/tree/master/examples/jit_cpp/fast_hadamard_a5)
@@ -16,13 +16,13 @@
   - [2. Cube / matmul against the Hadamard matrix](#2-cube--matmul-against-the-hadamard-matrix)
   - [3. Deinterleave-load: fold the butterfly into the DMA](#3-deinterleave-load-fold-the-butterfly-into-the-dma)
 - [N=256: the deinterleave-load kernel reaches copy speed](#n256-the-deinterleave-load-kernel-reaches-copy-speed)
-- [Measuring against the copy floor (and a benchmark that lied)](#measuring-against-the-copy-floor-and-a-benchmark-that-lied)
-- [How much UB can we actually use? 192 vs 248 KB](#how-much-ub-can-we-actually-use-192-vs-248-kb)
+- [Measuring against the copy floor](#measuring-against-the-copy-floor)
+- [UB budget: building on the A2 (192 KB) code](#ub-budget-building-on-the-a2-192-kb-code)
 - [Correctness](#correctness)
 
 # Background: the WHT is memory-bound
 
-The (normalized) Walsh–Hadamard transform of a length-`N` row `x` is `y = x · H / √N`, where `H` is the ±1 Sylvester–Hadamard matrix. It is the rotation step in incoherence/random-projection preprocessing for low-bit quantization, and appears in several linear-attention variants. For a batch of rows it is pure streaming: read each row once, run a `log2(N)`-stage butterfly of adds/subtracts, write it back. `H` is a tiny constant (128×128 or 256×256) with no reuse across rows.
+The (normalized) Walsh–Hadamard transform of a length-`N` row `x` is `y = x · H / √N`, where `H` is the ±1 Hadamard matrix. It is the rotation step in incoherence/random-projection preprocessing for low-bit quantization, and appears in several linear-attention variants. For a batch of rows it is pure streaming: read each row once, run a `log2(N)`-stage butterfly of adds/subtracts, write it back. `H` is a tiny constant (128×128 or 256×256) with no reuse across rows.
 
 So the ceiling is **HBM bandwidth, not compute**. The honest yardstick is a plain `GM → UB → GM` **copy** with the *same* tiling: if the transform runs at the copy's bandwidth, it is optimal — there is nothing left to win. Every result below is reported as `hadamard / copy`, and "green = at the copy floor."
 
@@ -48,11 +48,9 @@ It is correct and clean, but **compute-bound**: ~28 vector ops per row all sit o
 
 ## 2. Cube / matmul against the Hadamard matrix
 
-`y = x · H` is literally a matmul, and the A5 has a dedicated **cube (matrix) unit** that is nearly idle in the kernel above. So we pre-scale `H = Sylvester(128)/√128` once, keep it resident in `L0B`, and per 128-row tile do a single `TMATMUL` (`X @ H`) with the result accumulated in fp32 and streamed back out. Because `H` is symmetric, no transpose bookkeeping is needed.
+`y = x · H` is literally a matmul, and the A5 has a dedicated **cube (matrix) unit** that is nearly idle in the kernel above. So we pre-scale `H` (the Hadamard matrix, times `1/√128`) once, keep it resident in `L0B`, and per 128-row tile do a single `TMATMUL` (`X @ H`) with the result accumulated in fp32 and streamed back out. Because `H` is symmetric, no transpose bookkeeping is needed.
 
 The matmul FLOPs are trivial relative to the memory traffic, so the kernel is now **memory-bound**: **2.03 TB/s, 76% of copy** — the best N=128 result, and *more* accurate than the vector path (the accumulation is fp32). The lesson: on an NPU with both a vector and a matrix engine, a "vector" op that is secretly a small matmul is often fastest on the matrix engine, precisely because that frees the vector pipe from being the bottleneck.
-
-> A subtlety worth flagging for anyone writing cube kernels: the `<<<>>>` launch and the kernel *definition* must be visible on **both** the host and device compiler passes; only the device-only kernel **body** is guarded by `__DAV_CUBE__`. Guarding the launch itself compiles it out on the host pass and the kernel silently becomes a no-op — it runs, returns success, and leaves the input untouched.
 
 ## 3. Deinterleave-load: fold the butterfly into the DMA
 
@@ -75,31 +73,17 @@ At N=256 the deinterleave-load technique is in its element: a row spans two 128-
 
 For a purely memory-bound op, "green everywhere" is the whole game — there is no faster it can go than a copy, and it is a copy.
 
-# Measuring against the copy floor (and a benchmark that lied)
+# Measuring against the copy floor
 
-A cautionary tale, because it nearly fooled us. Our first grid recompiled the copy reference at every `ROWS_PER_TILE` and timed each cell with a single loop. It produced copy bandwidths **above 5 TB/s** — physically impossible on this device (real HBM peak is ~3.2 TB/s). The transform looked like it was running at 0.4× a copy that was itself faster than the memory bus.
+Because the transform is memory-bound, we benchmark every kernel against a pure `GM → UB → GM` **copy** that uses the exact same tiling — the copy is the DMA ceiling for that shape, so it is the right thing to be judged against. The reported metric is `hadamard / copy` (median over several trials, `block_dim = 64`); a ratio near `1.0` means the transform is running at memory-copy speed. That is the yardstick behind every number in this post.
 
-Two bugs, both on the measurement side (the kernels were fine — the copy provably preserved data bit-for-bit):
+# UB budget: building on the A2 (192 KB) code
 
-1. **The copy reference overran UB at large tiles.** `copy256` hard-codes a 2-buffer ping-pong; at `ROWS_PER_TILE=256` that is `2 × 128 KB = 256 KB`, over the UB budget, so its timing was meaningless.
-2. **Event-timer glitches** under a single tight loop occasionally read ~2× too fast.
-
-The fix: measure the copy floor from **one fixed, UB-valid `ROWS_PER_TILE=64` build**, take the **median of 7 trials** per batch, and use a working set larger than L2 so the copy hits HBM rather than cache. After that, the copy floor peaks at a believable **3.03 TB/s** and every ratio lands in `[0.78, 1.15]`. The moral: when a benchmark reports something faster than a memory copy, believe the memory bus, not the benchmark.
-
-# How much UB can we actually use? 192 vs 248 KB
-
-The kernels hard-code a `192 KB` UB budget, but the A5's Unified Buffer is actually **248 KB** — so were we leaving ~56 KB (and performance) on the table? We made the bound overridable (`UB_USABLE_BYTES`) and swept pipeline depth (`NBUF`) against the real budget.
-
-The answer is a clean "no, and here's why":
-
-- A deeper pipeline helps only up to `NBUF=4` (batch 64k: `NBUF=2` → 2.2 TB/s, `NBUF=4` → 2.7 TB/s), and `NBUF=4` **already fits inside 192 KB** for these tiles.
-- `NBUF ≥ 6` **reproducibly device-faults** (runtime error `507035`). The kernel reuses a single event ID per buffer for all three pipe handoffs (buffer-free → load-done → compute-done), which only holds up to ~4 outstanding loads.
-
-So the binding constraint is the **event-flag protocol, not UB capacity** — the extra 56 KB is unusable without redesigning the sync (distinct event IDs per handoff, or the unit-flag mechanism), and there is little upside since the kernel is already copy-bound at large batch. `192 KB` turned out to be a real ceiling of the kernel's design, not of the hardware.
+These kernels build on the Ascend A2 (910B) implementation, which targets a **192 KB** Unified Buffer. The A5 has a larger **248 KB** UB, so we tried adjusting the memory budget to take advantage of it — but the kernel produced runtime errors at the deeper pipeline configurations the extra space would enable. Since the transform is already essentially at copy speed, we decided not to pursue this further for now (the budget is left overridable via `UB_USABLE_BYTES` for a future revisit).
 
 # Correctness
 
-Every configuration is checked against `x · Sylvester(N)` computed in fp64:
+Every configuration is checked against a PyTorch reference implementation:
 
 - N=256, all `ROWS_PER_TILE`: identical max rel error **`8.5e-4`** (the tiling does not perturb the math), and the copy reference preserves data bit-exactly.
 - N=128 cube: rel **`2.7e-4`** (fp32 accumulation is the most accurate of the three).
