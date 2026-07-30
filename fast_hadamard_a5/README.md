@@ -6,7 +6,19 @@
 
 **To reproduce everything in this post**, see:
 - Kernels, benchmarks, correctness tests: [`pto-kernels/examples/jit_cpp/fast_hadamard_a5`](https://github.com/huawei-csl/pto-kernels/tree/master/examples/jit_cpp/fast_hadamard_a5)
-- Plots and raw CSV data: this directory (`bench256_grid.py` → `plot_hadamard256_grid.py`)
+- Plots and raw CSV data: this directory. The plotting scripts live here rather than
+  in the upstream PR, which ships only the kernel, its benchmark and its tests. The
+  CSV emitted by `benchmark.py` is the contract between the two:
+
+  ```bash
+  # in pto-kernels/examples/jit_cpp/fast_hadamard_a5 (needs an A5 device)
+  python benchmark.py 64            # -> build/grid256.csv
+  python benchmark.py 64 --nsweep   # -> build/nsweep256.csv
+
+  # here (needs only matplotlib)
+  python plot_hadamard256_a5.py     --csv <path>/build/grid256.csv
+  python plot_hadamard_nsweep_a5.py --csv <path>/build/nsweep256.csv
+  ```
 
 # Outline
 
