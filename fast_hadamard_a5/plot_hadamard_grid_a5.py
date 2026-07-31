@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""Plot the fast_hadamard_a5 tiling sweep into one PNG of two panels.
+"""Plot the fast_hadamard_a5 batch x ROWS_PER_TILE grid sweep.
 
-  * a heatmap of hadamard / torch copy over tile size x block size, from
-    build/grid.csv, skipping any cell whose `status` is not `ok`; and
-  * bandwidth against batch, transform and reference, from build/batch.csv.
+Reads the CSV emitted by benchmark.py (columns rows,nbuf,batch,pool,reps,micros,
+had_gbs,copy_gbs,ratio,status) and renders two panels into a single PNG:
+
+  * a heatmap of hadamard / copy (red = slow, green = at the torch copy), with
+    the ratio printed in each cell and any cell the harness flagged drawn grey,
+    and
+  * a bandwidth-vs-batch line comparing the transform against the torch copy.
 """
 import argparse
 import csv
@@ -23,27 +27,25 @@ except ImportError:
     plt = None
 
 DEFAULT_CSV = Path("build") / "grid.csv"
-DEFAULT_SCAN_CSV = Path("build") / "batch.csv"
 DEFAULT_PLOT_NAME = "hadamard_grid.png"
-ACHIEVABLE_CEILING = 0.994  # this pipeline's fraction of a copy with no compute
-VMIN = 0.5  # bottom of the colour scale
-CMAP = "Greens"  # sequential, single hue: the cells encode magnitude
-LIGHT_TEXT_ABOVE = 0.6  # fraction of the scale past which cell text goes white
+LINE_ROWS_PER_TILE = 32  # which ROWS_PER_TILE to draw in the bandwidth line panel
+VMIN, VMAX = 0.6, 1.0  # red at VMIN, green at VMAX
+
+
+def _read_rows(csv_path: Path):
+    with open(csv_path, newline="", encoding="utf-8") as handle:
+        for record in csv.DictReader(handle):
+            if record.get("batch"):
+                yield record
 
 
 def _parse_args():
-    parser = argparse.ArgumentParser(description="Plot fast_hadamard_a5 tiling sweep.")
+    parser = argparse.ArgumentParser(description="Plot fast_hadamard_a5 grid sweep.")
     parser.add_argument(
         "--csv",
         type=Path,
         default=DEFAULT_CSV,
-        help=f"tile x N CSV from benchmark.py (default: {DEFAULT_CSV}).",
-    )
-    parser.add_argument(
-        "--scan-csv",
-        type=Path,
-        default=DEFAULT_SCAN_CSV,
-        help=f"batch scan CSV from benchmark.py (default: {DEFAULT_SCAN_CSV}).",
+        help=f"Grid CSV from benchmark.py (default: {DEFAULT_CSV}).",
     )
     parser.add_argument(
         "--plot-name",
@@ -55,122 +57,89 @@ def _parse_args():
 
 
 def _load_grid(csv_path: Path):
-    """(tiles, ns, ratio[tile][n], rows[tile][n]) over usable cells only."""
+    """Return (rows, batches, ratio[r][b], flagged{(r,b)}, had[r][b], copy[b])."""
     ratio = defaultdict(dict)
-    rows_at = defaultdict(dict)
-    tiles_seen, ns_seen = set(), set()
-    skipped = []
-    with open(csv_path, newline="", encoding="utf-8") as handle:
-        for record in csv.DictReader(handle):
-            if not record.get("n") or not record.get("ratio"):
-                continue
-            status = (record.get("status") or "ok").strip()
-            tile = int(record["tile_kib"])
-            n = int(record["n"])
-            if status != "ok":
-                skipped.append((n, tile, status))
-                continue
-            tiles_seen.add(tile)
-            ns_seen.add(n)
-            ratio[tile][n] = float(record["ratio"])
-            rows_at[tile][n] = int(record["rows"])
-    for n, tile, status in skipped:
-        print(f"skipped N={n} tile={tile}KiB: {status}", file=sys.stderr)
-    return sorted(tiles_seen), sorted(ns_seen), ratio, rows_at
+    had = defaultdict(dict)
+    copy_floor = {}
+    flagged = set()
+    rows_seen, batches_seen = set(), set()
+    for record in _read_rows(csv_path):
+        rows = int(record["rows"])
+        batch = int(record["batch"])
+        rows_seen.add(rows)
+        batches_seen.add(batch)
+        ratio[rows][batch] = float(record["ratio"])
+        had[rows][batch] = float(record["had_gbs"])
+        copy_floor[batch] = float(record["copy_gbs"])
+        status = (record.get("status") or "ok").strip()
+        if status != "ok":
+            flagged.add((rows, batch))
+            print(f"flagged rows={rows} batch={batch}: {status}", file=sys.stderr)
+    return sorted(rows_seen), sorted(batches_seen), ratio, flagged, had, copy_floor
 
 
-def _load_scan(csv_path: Path):
-    if not csv_path.exists():
-        return []
-    out = []
-    with open(csv_path, newline="", encoding="utf-8") as handle:
-        for record in csv.DictReader(handle):
-            if not record.get("batch"):
-                continue
-            out.append(
-                {
-                    "batch": int(record["batch"]),
-                    "had": float(record["had_gbs"]),
-                    "copy": float(record["copy_gbs"]),
-                }
-            )
-    out.sort(key=lambda r: r["batch"])
-    return out
-
-
-def _draw_heatmap(axis, tiles, ns, ratio, rows_at):
-    # ascending tile size upward -> smallest at the bottom-left.
-    tiles_bottom_up = list(reversed(tiles))
-    grid = [[ratio[t].get(n, float("nan")) for n in ns] for t in tiles_bottom_up]
+def _draw_heatmap(axis, rows_sorted, batches_sorted, ratio, flagged):
+    # ROWS_PER_TILE ascending upward, batch ascending rightward. A flagged cell is
+    # drawn grey: a ratio over 1.0 is the out-of-place reference losing its
+    # comparability, not the fastest tiling, and the colour scale would rank it
+    # highest.
+    grid = [
+        [
+            float("nan") if (r, b) in flagged else ratio[r].get(b, float("nan"))
+            for b in batches_sorted
+        ]
+        for r in rows_sorted
+    ]
+    colours = plt.get_cmap("RdYlGn").with_extremes(bad="#d9d9d9")
     image = axis.imshow(
-        grid, aspect="auto", origin="lower", cmap=CMAP, vmin=VMIN, vmax=1.0
+        grid, aspect="auto", origin="lower", cmap=colours, vmin=VMIN, vmax=VMAX
     )
-    axis.set_xticks(range(len(ns)))
-    axis.set_xticklabels([str(n) for n in ns])
-    axis.set_yticks(range(len(tiles_bottom_up)))
-    axis.set_yticklabels([f"{t} KiB" for t in tiles_bottom_up])
-    axis.set_xlabel("block size N")
-    axis.set_ylabel("GM<->UB tile size")
-    axis.set_title(
-        f"hadamard / torch copy  (ceiling {ACHIEVABLE_CEILING:.3f} = DMA alone)"
+    axis.set_xticks(range(len(batches_sorted)))
+    axis.set_xticklabels(
+        [f"{b // 1024}k" if b >= 1024 else str(b) for b in batches_sorted],
+        rotation=45,
+        ha="right",
     )
-    for y, tile in enumerate(tiles_bottom_up):
-        for x, n in enumerate(ns):
-            value = ratio[tile].get(n)
+    axis.set_yticks(range(len(rows_sorted)))
+    axis.set_yticklabels(rows_sorted)
+    axis.set_xlabel("batch (rows of 256)")
+    axis.set_ylabel("ROWS_PER_TILE")
+    axis.set_title("hadamard / copy  (red = slow, green = at copy)")
+    for y, r in enumerate(rows_sorted):
+        for x, b in enumerate(batches_sorted):
+            value = ratio[r].get(b)
             if value is None:
                 continue
-            shade = (value - VMIN) / (1.0 - VMIN)
-            axis.text(
-                x,
-                y,
-                f"{value:.3f}\n{rows_at[tile][n]} rows",
-                ha="center",
-                va="center",
-                fontsize=7,
-                color="white" if shade > LIGHT_TEXT_ABOVE else "#1b1b1b",
-            )
-    bar = axis.figure.colorbar(
-        image,
-        ax=axis,
-        fraction=0.046,
-        pad=0.04,
-        label=f"had / copy   (— {ACHIEVABLE_CEILING:.3f} = DMA alone)",
-    )
-    bar.ax.axhline(ACHIEVABLE_CEILING, color="#1b1b1b", linewidth=1.4)
+            label = f"{value:.2f}*" if (r, b) in flagged else f"{value:.2f}"
+            axis.text(x, y, label, ha="center", va="center", fontsize=8)
+    axis.figure.colorbar(image, ax=axis, fraction=0.046, pad=0.04, label="had / copy")
 
 
-def _draw_bandwidth(axis, scan):
-    if not scan:
-        axis.set_axis_off()
-        axis.text(0.5, 0.5, "no batch.csv", ha="center", va="center")
-        return
-    x = list(range(len(scan)))
+def _draw_bandwidth_line(axis, batches_sorted, had, copy_floor):
+    had_row = had.get(LINE_ROWS_PER_TILE, {})
+    x = list(range(len(batches_sorted)))
+    had_tbs = [had_row.get(b, float("nan")) / 1000.0 for b in batches_sorted]
+    copy_tbs = [copy_floor.get(b, float("nan")) / 1000.0 for b in batches_sorted]
+    axis.plot(x, copy_tbs, "--", marker="o", color="#8b929b", label="torch copy")
     axis.plot(
         x,
-        [r["copy"] / 1000 for r in scan],
-        "--",
-        marker="o",
-        color="#8b929b",
-        label="torch copy (out-of-place)",
-    )
-    axis.plot(
-        x,
-        [r["had"] / 1000 for r in scan],
+        had_tbs,
         "-",
         marker="o",
         color="#2f6df6",
-        label="hadamard (in-place)",
+        label=f"hadamard (N=256, ROWS={LINE_ROWS_PER_TILE})",
     )
     axis.set_xticks(x)
     axis.set_xticklabels(
-        [f"{r['batch'] // 1024}k" for r in scan], rotation=45, ha="right"
+        [f"{b // 1024}k" if b >= 1024 else str(b) for b in batches_sorted],
+        rotation=45,
+        ha="right",
     )
     axis.set_xlabel("batch (rows of 256)")
     axis.set_ylabel("bandwidth (TB/s)")
-    axis.set_ylim(0, max(r["copy"] for r in scan) / 1000 * 1.15)
-    axis.set_title("Bandwidth vs batch")
+    axis.set_title("bandwidth vs batch")
     axis.grid(True, alpha=0.3)
-    axis.legend(loc="lower right", frameon=False)
+    axis.legend()
 
 
 def main():
@@ -181,18 +150,14 @@ def main():
     if not args.csv.exists():
         print(f"error: {args.csv} not found (run benchmark.py first)", file=sys.stderr)
         return
-    tiles, ns, ratio, rows_at = _load_grid(args.csv)
-    if not tiles:
-        print(f"error: no usable cells in {args.csv}", file=sys.stderr)
-        return
-    scan = _load_scan(args.scan_csv)
+    rows_sorted, batches_sorted, ratio, flagged, had, copy_floor = _load_grid(args.csv)
 
     fig, (heatmap_axis, line_axis) = plt.subplots(1, 2, figsize=(14, 5))
-    _draw_heatmap(heatmap_axis, tiles, ns, ratio, rows_at)
-    _draw_bandwidth(line_axis, scan)
+    _draw_heatmap(heatmap_axis, rows_sorted, batches_sorted, ratio, flagged)
+    _draw_bandwidth_line(line_axis, batches_sorted, had, copy_floor)
     fig.suptitle(
-        "fast_hadamard_a5 on Ascend A5 (dav-c310) — fraction of a torch copy by "
-        "tile size and block size"
+        "fast_hadamard_a5 on Ascend A5 (dav-c310) — fraction of the torch copy "
+        "by tiling and batch"
     )
     fig.tight_layout(rect=(0, 0, 1, 0.95))
 

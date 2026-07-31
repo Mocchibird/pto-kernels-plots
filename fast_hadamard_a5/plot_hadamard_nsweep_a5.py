@@ -2,15 +2,10 @@
 """Plot the fast_hadamard_a5 block-size (N) sweep.
 
 Reads the CSV emitted by ``benchmark.py --nsweep`` (columns n,chunks,rows,batch,
-pool,reps,micros,rel_err,had_gbs,copy_gbs,ratio,status) and renders three panels:
+pool,reps,micros,rel_err,had_gbs,copy_gbs,ratio,status) and renders two panels:
 
-  * achieved bandwidth vs N against the measured torch copy,
-  * the fraction of that copy reached, with the DMA-alone ceiling marked, and
-  * the vector-op cost per element, which tracks the shape of that fraction.
-
-Three single-scale panels rather than two with a twinned y-axis: the op count and
-the bandwidth ratio share no units, and overlaying them would invite reading a
-crossing point that means nothing.
+  * achieved bandwidth vs N against the measured torch copy, and
+  * the vector-op cost per element, which tracks the shape of that curve.
 
 Self-contained (matplotlib only): the shared plot_common helper imports
 jit_util_common, which pulls in torch, and the matplotlib-only plotting env has
@@ -36,7 +31,6 @@ DEFAULT_PLOT_NAME = "hadamard_nsweep.png"
 HAD_COLOR = "#2f6df6"
 FLOOR_COLOR = "#8b929b"
 OPS_COLOR = "#b8620a"
-ACHIEVABLE_CEILING = 0.994  # this pipeline's fraction of a copy with no compute
 VEC_F16_LANES = 128
 
 
@@ -134,47 +128,6 @@ def _draw_bandwidth(axis, rows):
             )
 
 
-def _draw_ratio(axis, rows):
-    x = [r["n"] for r in rows]
-    axis.plot(
-        x,
-        [r["ratio"] for r in rows],
-        "-",
-        marker="o",
-        color=HAD_COLOR,
-        linewidth=2,
-        markersize=8,
-        label="hadamard / copy",
-    )
-    axis.axhline(1.0, color=FLOOR_COLOR, linestyle="--", linewidth=2)
-    axis.axhline(
-        ACHIEVABLE_CEILING,
-        color="#c2410c",
-        linestyle=":",
-        linewidth=2,
-        label=f"DMA alone ({ACHIEVABLE_CEILING:.3f})",
-    )
-    axis.set_xscale("log", base=2)
-    axis.set_xticks(x)
-    axis.set_xticklabels([str(v) for v in x])
-    axis.set_xlabel("block size N")
-    axis.set_ylabel("fraction of torch copy")
-    axis.set_ylim(0.5, 1.05)
-    axis.set_title("Fraction of a torch copy (axis from 0.5)")
-    axis.grid(True, alpha=0.25)
-    axis.legend(loc="lower right", frameon=False)
-    best = max(rows, key=lambda r: r["ratio"])
-    axis.annotate(
-        f"{best['ratio']:.2f} at N={best['n']}",
-        (best["n"], best["ratio"]),
-        textcoords="offset points",
-        xytext=(0, -18),
-        ha="center",
-        fontsize=9,
-        color=HAD_COLOR,
-    )
-
-
 def _draw_ops(axis, rows):
     """Why the curve has that shape. Separate panel, not a second y-axis."""
     x = [r["n"] for r in rows]
@@ -226,9 +179,8 @@ def main():
         print(f"error: no usable rows in {args.csv}", file=sys.stderr)
         return
 
-    fig, (left, mid, right) = plt.subplots(1, 3, figsize=(18, 5))
+    fig, (left, right) = plt.subplots(1, 2, figsize=(13, 5))
     _draw_bandwidth(left, rows)
-    _draw_ratio(mid, rows)
     _draw_ops(right, rows)
     fig.suptitle(
         "fast_hadamard_a5 on Ascend A5 (dav-c310): block size N vs the torch copy"
