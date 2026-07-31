@@ -12,12 +12,12 @@
 
   ```bash
   # in pto-kernels/examples/jit_cpp/fast_hadamard_a5 (needs an A5 device)
-  python benchmark.py 64            # -> build/grid256.csv
-  python benchmark.py 64 --nsweep   # -> build/nsweep256.csv
+  python benchmark.py 64            # -> build/grid.csv
+  python benchmark.py 64 --nsweep   # -> build/nsweep.csv
 
   # here (needs only matplotlib)
-  python plot_hadamard256_a5.py     --csv <path>/build/grid256.csv
-  python plot_hadamard_nsweep_a5.py --csv <path>/build/nsweep256.csv
+  python plot_hadamard_grid_a5.py     --csv <path>/build/grid.csv
+  python plot_hadamard_nsweep_a5.py --csv <path>/build/nsweep.csv
   ```
 
 # Outline
@@ -75,7 +75,7 @@ At N=256 this is a full-width (128-lane) operation and it flies (next section). 
 
 At N=256 the deinterleave-load technique is in its element: a row spans two 128-lane registers, so the even/odd split is full-width and the vector pipe does nothing but `vadd`/`vsub` while the DMA streams. The result tracks the copy floor across essentially the entire batch × tiling grid:
 
-![fast_hadamard_256_a5: had/copy heatmap and bandwidth vs batch](hadamard256_grid.png)
+![fast_hadamard_a5: had/copy heatmap and bandwidth vs batch](hadamard_grid.png)
 
 **What the plot shows** (heatmap: `had/copy`, red = slow, green = at copy; line: absolute TB/s vs batch):
 

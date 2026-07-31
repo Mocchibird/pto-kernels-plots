@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot the fast_hadamard_256_a5 block-size (N) sweep.
+"""Plot the fast_hadamard_a5 block-size (N) sweep.
 
 Reads the CSV emitted by ``benchmark.py --nsweep`` (columns n,chunks,rows,batch,
 rel_err,had_gbs,copy_gbs,ratio) and renders two panels:
@@ -33,7 +33,7 @@ try:
 except ImportError:
     plt = None
 
-DEFAULT_CSV = Path("build") / "nsweep256.csv"
+DEFAULT_CSV = Path("build") / "nsweep.csv"
 DEFAULT_PLOT_NAME = "hadamard_nsweep.png"
 HAD_COLOR = "#2f6df6"
 FLOOR_COLOR = "#8b929b"
@@ -225,7 +225,7 @@ def main():
     _draw_ratio(mid, rows)
     _draw_ops(right, rows)
     fig.suptitle(
-        "fast_hadamard_256_a5 on Ascend A5 (dav-c310): block size N vs the copy floor"
+        "fast_hadamard_a5 on Ascend A5 (dav-c310): block size N vs the copy floor"
     )
     fig.tight_layout(rect=(0, 0, 1, 0.95))
     output_path = args.csv.parent / args.plot_name

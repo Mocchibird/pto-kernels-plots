@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot the fast_hadamard_256_a5 batch x ROWS_PER_TILE grid sweep.
+"""Plot the fast_hadamard_a5 batch x ROWS_PER_TILE grid sweep.
 
 Reads the CSV emitted by benchmark.py (columns rows,nbuf,batch,had_gbs,
 copy_gbs,ratio) and renders two panels into a single PNG:
@@ -33,14 +33,14 @@ def _read_rows(csv_path: Path):
                 yield record
 
 
-DEFAULT_CSV = Path("build") / "grid256.csv"
-DEFAULT_PLOT_NAME = "hadamard256_grid.png"
+DEFAULT_CSV = Path("build") / "grid.csv"
+DEFAULT_PLOT_NAME = "hadamard_grid.png"
 LINE_ROWS_PER_TILE = 64  # which ROWS_PER_TILE to draw in the bandwidth line panel
 
 
 def _parse_args():
     parser = argparse.ArgumentParser(
-        description="Plot fast_hadamard_256_a5 grid sweep."
+        description="Plot fast_hadamard_a5 grid sweep."
     )
     parser.add_argument(
         "--csv",
@@ -114,7 +114,7 @@ def _draw_bandwidth_line(axis, batches_sorted, had, copy_floor):
         "-",
         marker="o",
         color="#2f6df6",
-        label=f"hadamard-256 (ROWS={LINE_ROWS_PER_TILE})",
+        label=f"hadamard (N=256, ROWS={LINE_ROWS_PER_TILE})",
     )
     axis.set_xticks(x)
     axis.set_xticklabels(
@@ -143,7 +143,8 @@ def main():
     _draw_heatmap(heatmap_axis, rows_sorted, batches_sorted, ratio)
     _draw_bandwidth_line(line_axis, batches_sorted, had, copy_floor)
     fig.suptitle(
-        "fast_hadamard_256_a5 on Ascend A5 (dav-c310) — memory-bound, at the copy floor"
+        "fast_hadamard_a5 on Ascend A5 (dav-c310) — fraction of the copy floor "
+        "by tiling and batch"
     )
     fig.tight_layout(rect=(0, 0, 1, 0.95))
 
