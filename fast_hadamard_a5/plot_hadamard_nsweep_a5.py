@@ -2,13 +2,11 @@
 """Plot the fast_hadamard_a5 block-size (N) sweep.
 
 Reads the CSV emitted by ``benchmark.py --nsweep`` (columns n,chunks,rows,batch,
-rel_err,had_gbs,copy_gbs,ratio) and renders two panels:
+pool,reps,micros,rel_err,had_gbs,copy_gbs,ratio,status) and renders three panels:
 
-  * achieved bandwidth vs N against the measured torch copy, and
-  * the fraction of that floor reached, and
-  * the vector-op cost per element, which explains why the ratio is now flat:
-    packing keeps all 128 lanes busy at every N, so cost no longer blows up
-    as N shrinks.
+  * achieved bandwidth vs N against the measured torch copy,
+  * the fraction of that copy reached, with the DMA-alone ceiling marked, and
+  * the vector-op cost per element, which tracks the shape of that fraction.
 
 Three single-scale panels rather than two with a twinned y-axis: the op count and
 the bandwidth ratio share no units, and overlaying them would invite reading a
@@ -38,6 +36,7 @@ DEFAULT_PLOT_NAME = "hadamard_nsweep.png"
 HAD_COLOR = "#2f6df6"
 FLOOR_COLOR = "#8b929b"
 OPS_COLOR = "#b8620a"
+ACHIEVABLE_CEILING = 0.994  # this pipeline's fraction of a copy with no compute
 VEC_F16_LANES = 128
 
 
@@ -148,13 +147,20 @@ def _draw_ratio(axis, rows):
         label="hadamard / copy",
     )
     axis.axhline(1.0, color=FLOOR_COLOR, linestyle="--", linewidth=2)
+    axis.axhline(
+        ACHIEVABLE_CEILING,
+        color="#c2410c",
+        linestyle=":",
+        linewidth=2,
+        label=f"DMA alone ({ACHIEVABLE_CEILING:.3f})",
+    )
     axis.set_xscale("log", base=2)
     axis.set_xticks(x)
     axis.set_xticklabels([str(v) for v in x])
     axis.set_xlabel("block size N")
     axis.set_ylabel("fraction of torch copy")
-    axis.set_ylim(0, 1.15)
-    axis.set_title("Fraction of the DMA ceiling")
+    axis.set_ylim(0.5, 1.05)
+    axis.set_title("Fraction of a torch copy (axis from 0.5)")
     axis.grid(True, alpha=0.25)
     axis.legend(loc="lower right", frameon=False)
     best = max(rows, key=lambda r: r["ratio"])
