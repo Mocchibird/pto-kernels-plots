@@ -2,9 +2,10 @@
 """Plot the fast_hadamard_a5 block-size (N) sweep.
 
 Reads the CSV emitted by ``benchmark.py --nsweep`` (columns n,chunks,rows,batch,
-pool,reps,micros,rel_err,had_gbs,copy_gbs,ratio,status) and renders two panels:
+pool,reps,micros,rel_err,had_gbs,copy_gbs,ratio,status) and renders three panels:
 
-  * achieved bandwidth vs N against the measured torch copy, and
+  * achieved bandwidth vs N against the measured torch copy,
+  * the same thing as a fraction of that copy, which is the number to read, and
   * the vector-op cost per element, which tracks the shape of that curve.
 
 Self-contained (matplotlib only): the shared plot_common helper imports
@@ -128,6 +129,51 @@ def _draw_bandwidth(axis, rows):
             )
 
 
+def _draw_ratio(axis, rows):
+    """Fraction of the reference the kernel achieves, with the ceiling marked."""
+    x = [r["n"] for r in rows]
+    ratios = [r["ratio"] for r in rows]
+    axis.axhline(1.0, linestyle="--", color=FLOOR_COLOR, linewidth=2)
+    axis.annotate(
+        "torch copy",
+        (x[0], 1.0),
+        textcoords="offset points",
+        xytext=(2, 6),
+        fontsize=9,
+        color=FLOOR_COLOR,
+    )
+    axis.plot(
+        x,
+        ratios,
+        "-",
+        marker="o",
+        color=HAD_COLOR,
+        linewidth=2,
+        markersize=8,
+        label="hadamard / torch copy",
+    )
+    axis.set_xscale("log", base=2)
+    axis.set_xticks(x)
+    axis.set_xticklabels([str(v) for v in x])
+    axis.set_xlabel("block size N")
+    axis.set_ylabel("fraction of the reference")
+    axis.set_ylim(0, 1.15)
+    axis.set_title("Fraction of the DMA ceiling")
+    axis.grid(True, alpha=0.25)
+    axis.legend(loc="lower left", frameon=False)
+    for r in rows:
+        if r["n"] in (min(x), 256, max(x)):
+            axis.annotate(
+                f"{r['ratio']:.2f}",
+                (r["n"], r["ratio"]),
+                textcoords="offset points",
+                xytext=(0, -17),
+                ha="center",
+                fontsize=9,
+                color=HAD_COLOR,
+            )
+
+
 def _draw_ops(axis, rows):
     """Why the curve has that shape. Separate panel, not a second y-axis."""
     x = [r["n"] for r in rows]
@@ -156,8 +202,8 @@ def _draw_ops(axis, rows):
         f"cheapest at N={x[lo]}",
         (x[lo], ops[lo]),
         textcoords="offset points",
-        xytext=(12, 2),
-        ha="center",
+        xytext=(10, -4),
+        ha="left",
         fontsize=9,
         color=OPS_COLOR,
     )
@@ -179,8 +225,9 @@ def main():
         print(f"error: no usable rows in {args.csv}", file=sys.stderr)
         return
 
-    fig, (left, right) = plt.subplots(1, 2, figsize=(13, 5))
+    fig, (left, middle, right) = plt.subplots(1, 3, figsize=(19, 5))
     _draw_bandwidth(left, rows)
+    _draw_ratio(middle, rows)
     _draw_ops(right, rows)
     fig.suptitle(
         "fast_hadamard_a5 on Ascend A5 (dav-c310): block size N vs the torch copy"

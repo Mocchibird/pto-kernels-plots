@@ -4,9 +4,8 @@
 Reads the CSV emitted by benchmark.py (columns rows,nbuf,batch,pool,reps,micros,
 had_gbs,copy_gbs,ratio,status) and renders two panels into a single PNG:
 
-  * a heatmap of hadamard / copy (red = slow, green = at the torch copy), with
-    the ratio printed in each cell and any cell the harness flagged drawn grey,
-    and
+  * a heatmap of hadamard / copy (red = slow, green = at the torch copy), the
+    ratio printed in every cell and a '*' on any the harness flagged, and
   * a bandwidth-vs-batch line comparing the transform against the torch copy.
 """
 import argparse
@@ -57,11 +56,11 @@ def _parse_args():
 
 
 def _load_grid(csv_path: Path):
-    """Return (rows, batches, ratio[r][b], flagged{(r,b)}, had[r][b], copy[b])."""
+    """Return (rows, batches, ratio[r][b], flagged{(r,b): status}, had, copy)."""
     ratio = defaultdict(dict)
     had = defaultdict(dict)
     copy_floor = {}
-    flagged = set()
+    flagged = {}
     rows_seen, batches_seen = set(), set()
     for record in _read_rows(csv_path):
         rows = int(record["rows"])
@@ -73,22 +72,19 @@ def _load_grid(csv_path: Path):
         copy_floor[batch] = float(record["copy_gbs"])
         status = (record.get("status") or "ok").strip()
         if status != "ok":
-            flagged.add((rows, batch))
+            flagged[(rows, batch)] = status
             print(f"flagged rows={rows} batch={batch}: {status}", file=sys.stderr)
     return sorted(rows_seen), sorted(batches_seen), ratio, flagged, had, copy_floor
 
 
 def _draw_heatmap(axis, rows_sorted, batches_sorted, ratio, flagged):
-    # ROWS_PER_TILE ascending upward, batch ascending rightward. A flagged cell is
-    # drawn grey: a ratio over 1.0 is the out-of-place reference losing its
-    # comparability, not the fastest tiling, and the colour scale would rank it
-    # highest.
+    # ROWS_PER_TILE ascending upward, batch ascending rightward. Every cell carries
+    # its hadamard/copy ratio; a cell the harness flagged is suffixed '*' and listed
+    # on stderr. Below MIN_DEVICE_MICROS a launch is overhead-bound, so a '*' there
+    # means the ratio is two overhead-dominated timings divided, not a bandwidth
+    # figure.
     grid = [
-        [
-            float("nan") if (r, b) in flagged else ratio[r].get(b, float("nan"))
-            for b in batches_sorted
-        ]
-        for r in rows_sorted
+        [ratio[r].get(b, float("nan")) for b in batches_sorted] for r in rows_sorted
     ]
     colours = plt.get_cmap("RdYlGn").with_extremes(bad="#d9d9d9")
     image = axis.imshow(
@@ -115,7 +111,7 @@ def _draw_heatmap(axis, rows_sorted, batches_sorted, ratio, flagged):
     axis.figure.colorbar(image, ax=axis, fraction=0.046, pad=0.04, label="had / copy")
 
 
-def _draw_bandwidth_line(axis, batches_sorted, had, copy_floor):
+def _draw_bandwidth_line(axis, batches_sorted, had, copy_floor, flagged):
     had_row = had.get(LINE_ROWS_PER_TILE, {})
     x = list(range(len(batches_sorted)))
     had_tbs = [had_row.get(b, float("nan")) / 1000.0 for b in batches_sorted]
@@ -129,6 +125,26 @@ def _draw_bandwidth_line(axis, batches_sorted, had, copy_floor):
         color="#2f6df6",
         label=f"hadamard (N=256, ROWS={LINE_ROWS_PER_TILE})",
     )
+    # Hollow the points the harness flagged. Without this the line crossing above
+    # the reference reads as "faster than a copy" when it is really a cell the
+    # harness already rejected.
+    bad = [
+        (i, had_tbs[i])
+        for i, b in enumerate(batches_sorted)
+        if (LINE_ROWS_PER_TILE, b) in flagged
+    ]
+    if bad:
+        axis.plot(
+            [i for i, _ in bad],
+            [v for _, v in bad],
+            "o",
+            markerfacecolor="white",
+            markeredgecolor="#2f6df6",
+            markeredgewidth=2,
+            markersize=9,
+            linestyle="none",
+            label="not a bandwidth ratio",
+        )
     axis.set_xticks(x)
     axis.set_xticklabels(
         [f"{b // 1024}k" if b >= 1024 else str(b) for b in batches_sorted],
@@ -154,7 +170,7 @@ def main():
 
     fig, (heatmap_axis, line_axis) = plt.subplots(1, 2, figsize=(14, 5))
     _draw_heatmap(heatmap_axis, rows_sorted, batches_sorted, ratio, flagged)
-    _draw_bandwidth_line(line_axis, batches_sorted, had, copy_floor)
+    _draw_bandwidth_line(line_axis, batches_sorted, had, copy_floor, flagged)
     fig.suptitle(
         "fast_hadamard_a5 on Ascend A5 (dav-c310) — fraction of the torch copy "
         "by tiling and batch"
