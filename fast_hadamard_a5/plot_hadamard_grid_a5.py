@@ -4,9 +4,9 @@
 Reads the CSV emitted by benchmark.py (columns rows,nbuf,batch,had_gbs,
 copy_gbs,ratio) and renders two panels into a single PNG:
 
-  * a heatmap of hadamard / copy (red = slow, green = at the copy floor), with
+  * a heatmap of hadamard / copy (red = slow, green = at the torch copy), with
     the ratio printed in each cell, and
-  * a bandwidth-vs-batch line comparing the transform against the copy floor.
+  * a bandwidth-vs-batch line comparing the transform against the torch copy.
 """
 import argparse
 import csv
@@ -107,7 +107,7 @@ def _draw_bandwidth_line(axis, batches_sorted, had, copy_floor):
     x = list(range(len(batches_sorted)))
     had_tbs = [had_row.get(b, float("nan")) / 1000.0 for b in batches_sorted]
     copy_tbs = [copy_floor.get(b, float("nan")) / 1000.0 for b in batches_sorted]
-    axis.plot(x, copy_tbs, "--", marker="o", color="#8b929b", label="copy floor")
+    axis.plot(x, copy_tbs, "--", marker="o", color="#8b929b", label="torch copy")
     axis.plot(
         x,
         had_tbs,
@@ -143,7 +143,7 @@ def main():
     _draw_heatmap(heatmap_axis, rows_sorted, batches_sorted, ratio)
     _draw_bandwidth_line(line_axis, batches_sorted, had, copy_floor)
     fig.suptitle(
-        "fast_hadamard_a5 on Ascend A5 (dav-c310) — fraction of the copy floor "
+        "fast_hadamard_a5 on Ascend A5 (dav-c310) — fraction of the torch copy "
         "by tiling and batch"
     )
     fig.tight_layout(rect=(0, 0, 1, 0.95))

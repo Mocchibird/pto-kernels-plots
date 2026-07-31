@@ -4,7 +4,7 @@
 Reads the CSV emitted by ``benchmark.py --nsweep`` (columns n,chunks,rows,batch,
 rel_err,had_gbs,copy_gbs,ratio) and renders two panels:
 
-  * achieved bandwidth vs N against the measured copy floor, and
+  * achieved bandwidth vs N against the measured torch copy, and
   * the fraction of that floor reached, and
   * the vector-op cost per element, which explains why the ratio is now flat:
     packing keeps all 128 lanes busy at every N, so cost no longer blows up
@@ -100,7 +100,7 @@ def _draw_bandwidth(axis, rows):
         color=FLOOR_COLOR,
         linewidth=2,
         markersize=8,
-        label="copy floor (DMA ceiling)",
+        label="torch copy (reference)",
     )
     axis.plot(
         x,
@@ -152,7 +152,7 @@ def _draw_ratio(axis, rows):
     axis.set_xticks(x)
     axis.set_xticklabels([str(v) for v in x])
     axis.set_xlabel("block size N")
-    axis.set_ylabel("fraction of copy floor")
+    axis.set_ylabel("fraction of torch copy")
     axis.set_ylim(0, 1.15)
     axis.set_title("Fraction of the DMA ceiling")
     axis.grid(True, alpha=0.25)
@@ -225,7 +225,7 @@ def main():
     _draw_ratio(mid, rows)
     _draw_ops(right, rows)
     fig.suptitle(
-        "fast_hadamard_a5 on Ascend A5 (dav-c310): block size N vs the copy floor"
+        "fast_hadamard_a5 on Ascend A5 (dav-c310): block size N vs the torch copy"
     )
     fig.tight_layout(rect=(0, 0, 1, 0.95))
     output_path = args.csv.parent / args.plot_name
