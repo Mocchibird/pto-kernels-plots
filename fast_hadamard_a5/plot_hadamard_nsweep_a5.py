@@ -130,7 +130,12 @@ def _draw_bandwidth(axis, rows):
 
 
 def _draw_ratio(axis, rows):
-    """Fraction of the reference the kernel achieves, with the ceiling marked."""
+    """Fraction of the reference the kernel achieves, with parity marked.
+
+    Not titled a ceiling: torch's device-to-device copy carries its own overheads,
+    so 1.0 is parity with that reference rather than a hardware limit, and a value
+    above it is not automatically a bad measurement.
+    """
     x = [r["n"] for r in rows]
     ratios = [r["ratio"] for r in rows]
     axis.axhline(1.0, linestyle="--", color=FLOOR_COLOR, linewidth=2)
@@ -158,7 +163,7 @@ def _draw_ratio(axis, rows):
     axis.set_xlabel("block size N")
     axis.set_ylabel("fraction of the reference")
     axis.set_ylim(0, 1.15)
-    axis.set_title("Fraction of the DMA ceiling")
+    axis.set_title("Fraction of the torch copy")
     axis.grid(True, alpha=0.25)
     axis.legend(loc="lower left", frameon=False)
     for r in rows:
