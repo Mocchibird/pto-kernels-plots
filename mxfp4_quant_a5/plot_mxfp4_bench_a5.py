@@ -9,6 +9,16 @@ Reads the CSVs from benchmark.py and renders two panels:
 Only the allocating rows are compared. torch_npu allocates inherently, so pitting
 it against a preallocated kernel would credit us with an allocation we skipped;
 the preallocated row is drawn as a dashed reference, not as the comparison.
+
+A device-to-device copy is drawn as a roofline reference. It moves 4 B/elem where
+the quantizers move 2.53, so its curve is NOT a competitor -- it says how much of
+the machine is left.
+
+Timing is a saturated queue (N launches between two synchronizes, wall clock / N),
+not per-launch events: per-launch torch.npu.Event pairs on this box returned
+82.0/27.7/7.6/24.0 us for one and the same launch. These are therefore bandwidth
+figures with per-launch dispatch amortised out, which is stated on the figure
+because it is the difference between "582 GB/s" and "2759 GB/s" at K=128.
 """
 
 import argparse
@@ -92,6 +102,30 @@ def draw_bandwidth(axis, rows):
             ms=7,
             label="torch_npu (allocating)",
         )
+    kc, copy = series(rows, "d2d_copy", 0)
+    if copy:
+        axis.plot(
+            kc,
+            [v / 1000 for v in copy],
+            ":",
+            color=NEUTRAL,
+            lw=1.6,
+            label="d2d copy (4 B/elem ref)",
+        )
+        # the copy rewrites one destination buffer, so at small K that buffer stays
+        # resident and the rate goes above HBM -- say so rather than let the
+        # reference line look like a broken baseline
+        axis.text(
+            0.97,
+            0.97,
+            "the copy reference reuses one dst buffer, so its\n"
+            "small-K values sit above HBM — cache, not bandwidth",
+            transform=axis.transAxes,
+            ha="right",
+            va="top",
+            fontsize=8,
+            color=NEUTRAL,
+        )
     axis.set_xscale("log", base=2)
     axis.set_xticks(ks)
     axis.set_xticklabels([str(k) for k in ks])
@@ -161,7 +195,16 @@ def main():
     draw_bandwidth(left, rows)
     draw_ratio(right, rows)
     fig.suptitle("mxfp4_quant_a5 on Ascend A5 (dav-c310) — bf16 → MXFP4 vs torch_npu")
-    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    fig.text(
+        0.5,
+        0.925,
+        "steady-state throughput: 40 launches per wall-clock bracket, "
+        "9 brackets, median of 3 sweeps — not single-launch latency",
+        ha="center",
+        fontsize=8.5,
+        color=NEUTRAL,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.91))
     out = args.csv.parent / args.plot_name
     fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
