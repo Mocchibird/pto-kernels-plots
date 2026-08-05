@@ -6,15 +6,21 @@ Reads the CSVs from benchmark.py and renders two panels:
   * achieved bandwidth vs block width K, and
   * the apples-to-apples ratio (both contenders allocating their outputs).
 
-Only the allocating rows are compared. torch_npu allocates inherently, so pitting
-it against a preallocated kernel would credit us with an allocation we skipped;
-the preallocated row is drawn as a dashed reference, not as the comparison.
+The figure draws exactly one comparison: both contenders allocating their outputs.
+torch_npu allocates inherently, so that is the only apples-to-apples pair.
 
-benchmark.py also measures a device-to-device copy, but it is deliberately NOT
-drawn: it moves 4 B/elem where the quantizers move 2.53, and it rewrites one
-destination buffer, so at small K that buffer stays resident and the curve runs
-above HBM. On a shared axis it reads as a broken baseline rather than a roofline.
-The row is still in the CSV, and benchmark.py uses it as the sanity bound that
+benchmark.py measures two more rows that are deliberately NOT drawn, because on a
+shared axis each one misleads rather than informs:
+
+  * the kernel with preallocated outputs -- a real number, and the one you get
+    integrating this with persistent buffers, but on the same axis it invites a
+    comparison against an allocating vendor that it is not entitled to;
+  * a device-to-device copy -- it moves 4 B/elem where the quantizers move 2.53,
+    and it rewrites one destination buffer, so at small K that buffer stays
+    resident and the curve runs above HBM, reading as a broken baseline rather
+    than a roofline.
+
+Both stay in the CSV, and benchmark.py uses the copy as the sanity bound that
 catches an impossible rate.
 
 Timing is a saturated queue (N launches between two synchronizes, wall clock / N),
@@ -74,7 +80,6 @@ def series(rows, contender, allocates):
 
 def draw_bandwidth(axis, rows):
     ks, ours = series(rows, "ours", 1)
-    _, ours_pre = series(rows, "ours", 0)
     kv, vendor = series(rows, "torch_npu", 1)
     axis.plot(
         ks,
@@ -85,16 +90,6 @@ def draw_bandwidth(axis, rows):
         ms=7,
         label="ours (allocating)",
     )
-    if ours_pre:
-        axis.plot(
-            ks,
-            [v / 1000 for v in ours_pre],
-            "--",
-            color=OURS,
-            lw=1.4,
-            alpha=0.7,
-            label="ours (preallocated)",
-        )
     if vendor:
         axis.plot(
             kv,
