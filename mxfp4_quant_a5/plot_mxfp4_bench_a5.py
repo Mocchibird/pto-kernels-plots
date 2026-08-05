@@ -10,9 +10,12 @@ Only the allocating rows are compared. torch_npu allocates inherently, so pittin
 it against a preallocated kernel would credit us with an allocation we skipped;
 the preallocated row is drawn as a dashed reference, not as the comparison.
 
-A device-to-device copy is drawn as a roofline reference. It moves 4 B/elem where
-the quantizers move 2.53, so its curve is NOT a competitor -- it says how much of
-the machine is left.
+benchmark.py also measures a device-to-device copy, but it is deliberately NOT
+drawn: it moves 4 B/elem where the quantizers move 2.53, and it rewrites one
+destination buffer, so at small K that buffer stays resident and the curve runs
+above HBM. On a shared axis it reads as a broken baseline rather than a roofline.
+The row is still in the CSV, and benchmark.py uses it as the sanity bound that
+catches an impossible rate.
 
 Timing is a saturated queue (N launches between two synchronizes, wall clock / N),
 not per-launch events: per-launch torch.npu.Event pairs on this box returned
@@ -101,30 +104,6 @@ def draw_bandwidth(axis, rows):
             lw=2,
             ms=7,
             label="torch_npu (allocating)",
-        )
-    kc, copy = series(rows, "d2d_copy", 0)
-    if copy:
-        axis.plot(
-            kc,
-            [v / 1000 for v in copy],
-            ":",
-            color=NEUTRAL,
-            lw=1.6,
-            label="d2d copy (4 B/elem ref)",
-        )
-        # the copy rewrites one destination buffer, so at small K that buffer stays
-        # resident and the rate goes above HBM -- say so rather than let the
-        # reference line look like a broken baseline
-        axis.text(
-            0.97,
-            0.97,
-            "the copy reference reuses one dst buffer, so its\n"
-            "small-K values sit above HBM — cache, not bandwidth",
-            transform=axis.transAxes,
-            ha="right",
-            va="top",
-            fontsize=8,
-            color=NEUTRAL,
         )
     axis.set_xscale("log", base=2)
     axis.set_xticks(ks)
