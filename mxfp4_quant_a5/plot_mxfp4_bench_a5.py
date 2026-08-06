@@ -23,9 +23,6 @@ shared axis each one misleads rather than informs:
 Both stay in the CSV, and benchmark.py uses the copy as the sanity bound that
 catches an impossible rate.
 
-Widths whose block count is ODD are absent by design, not by accident: torch_npu
-pads its scale array there and drops onto a slow path, so comparing on them would
-measure a shape it does not properly support. See benchmark.py.
 
 Timing is a saturated queue (N launches between two synchronizes, wall clock / N),
 not per-launch events: per-launch torch.npu.Event pairs on this box returned
@@ -72,11 +69,25 @@ def load(path):
     return rows
 
 
+def is_power_of_two(k):
+    return k & (k - 1) == 0
+
+
 def series(rows, contender, allocates):
+    """Only the powers of two get plotted.
+
+    The sweep measures every supported width, but the figure is about the shapes
+    people actually reach for; the rest stay in the CSV as confirmation that the
+    kernel handles them. Non-powers of two are also the widths whose tile cannot
+    be filled completely, so mixing them in adds a sawtooth that is about tiling,
+    not about the comparison.
+    """
     got = {
         r["k"]: r["gbs"]
         for r in rows
-        if r["contender"] == contender and r["allocates"] == allocates
+        if r["contender"] == contender
+        and r["allocates"] == allocates
+        and is_power_of_two(r["k"])
     }
     ks = sorted(got)
     return ks, [got[k] for k in ks]
@@ -85,45 +96,31 @@ def series(rows, contender, allocates):
 def draw_bandwidth(axis, rows):
     ks, ours = series(rows, "ours", 1)
     kv, vendor = series(rows, "torch_npu", 1)
-    # categorical x, not log2: 26 widths include many non-powers of two and a
-    # log axis crams 768..1792 into an unreadable clump
-    xs = range(len(ks))
     axis.plot(
-        xs,
+        ks,
         [v / 1000 for v in ours],
         "-o",
         color=OURS,
         lw=2,
-        ms=5,
+        ms=7,
         label="ours (allocating)",
     )
     if vendor:
-        shared = {k: v for k, v in zip(kv, vendor)}
         axis.plot(
-            xs,
-            [shared[k] / 1000 for k in ks],
+            kv,
+            [v / 1000 for v in vendor],
             "-s",
             color=VENDOR,
             lw=2,
-            ms=5,
+            ms=7,
             label="torch_npu (allocating)",
         )
-        worst_k = min(shared, key=shared.get)
-        if shared[worst_k] < 1000:
-            axis.annotate(
-                f"vendor collapses at K={worst_k}\n({shared[worst_k]:.0f} GB/s)",
-                (ks.index(worst_k), shared[worst_k] / 1000),
-                textcoords="offset points",
-                xytext=(12, 4),
-                fontsize=8,
-                color=VENDOR,
-            )
-    axis.set_xticks(list(xs))
-    axis.set_xticklabels([str(k) for k in ks], rotation=55, ha="right", fontsize=7.5)
+    axis.set_xscale("log", base=2)
+    axis.set_xticks(ks)
+    axis.set_xticklabels([str(k) for k in ks])
     axis.set_xlabel("block width K")
     axis.set_ylabel("bandwidth (TB/s)")
-    axis.set_ylim(0, None)
-    axis.set_title("bf16 → MXFP4 bandwidth, constant 64 Mi elements per launch")
+    axis.set_title("bf16 → MXFP4 bandwidth, constant work per launch")
     axis.grid(alpha=0.25)
     axis.legend(loc="lower right", frameon=False, fontsize=9)
 
@@ -147,28 +144,21 @@ def draw_ratio(axis, rows):
         fontsize=9,
         color=NEUTRAL,
     )
-    # dots on a deviation axis, not bars: a truncated bar axis misleads
+    colors = [OURS if r >= 1.0 else VENDOR for r in ratio]
+    axis.bar([str(k) for k in shared], ratio, color=colors, width=0.6)
     for x, r in enumerate(ratio):
-        axis.plot([x, x], [1.0, min(r, 1.35)], color=OURS, lw=1.6, zorder=1)
-        axis.plot([x], [min(r, 1.35)], "o", color=OURS, ms=6, zorder=2)
-        if r > 1.15:
-            axis.annotate(
-                f"{r:.2f}" + ("" if r < 2 else " ↑"),
-                (x, min(r, 1.35)),
-                textcoords="offset points",
-                xytext=(0, 6),
-                ha="center",
-                fontsize=7.5,
-            )
-    axis.set_xticks(range(len(shared)))
-    axis.set_xticklabels([str(k) for k in shared], rotation=55, ha="right", fontsize=8)
-    # K=96 is ~7x and would flatten the rest; clip and say so
-    shown = [r for r in ratio if r < 2.0]
-    axis.set_ylim(0.9, max(shown) * 1.06 if shown else 1.3)
+        axis.annotate(
+            f"{r:.2f}",
+            (x, r),
+            textcoords="offset points",
+            xytext=(0, 4 if r >= 1 else -12),
+            ha="center",
+            fontsize=9,
+        )
+    axis.set_ylim(0, max(ratio) * 1.25)
     axis.set_xlabel("block width K")
     axis.set_ylabel("ours / torch_npu")
     axis.set_title("apples-to-apples: both allocating outputs")
-    axis.axhline(1.0, ls="--", color=NEUTRAL, lw=1.2, zorder=0)
     axis.grid(axis="y", alpha=0.25)
 
 
