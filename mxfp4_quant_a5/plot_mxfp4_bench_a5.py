@@ -27,7 +27,7 @@ Timing is a saturated queue (N launches between two synchronizes, wall clock / N
 not per-launch events: per-launch torch.npu.Event pairs on this box returned
 82.0/27.7/7.6/24.0 us for one and the same launch. These are therefore bandwidth
 figures with per-launch dispatch amortised out, which is stated on the figure
-because it is the difference between "582 GB/s" and "2759 GB/s" at K=128.
+because it is the difference between a dispatch-bound and a bandwidth number.
 """
 
 import argparse
@@ -81,31 +81,45 @@ def series(rows, contender, allocates):
 def draw_bandwidth(axis, rows):
     ks, ours = series(rows, "ours", 1)
     kv, vendor = series(rows, "torch_npu", 1)
+    # categorical x, not log2: 26 widths include many non-powers of two and a
+    # log axis crams 768..1792 into an unreadable clump
+    xs = range(len(ks))
     axis.plot(
-        ks,
+        xs,
         [v / 1000 for v in ours],
         "-o",
         color=OURS,
         lw=2,
-        ms=7,
+        ms=5,
         label="ours (allocating)",
     )
     if vendor:
+        shared = {k: v for k, v in zip(kv, vendor)}
         axis.plot(
-            kv,
-            [v / 1000 for v in vendor],
+            xs,
+            [shared[k] / 1000 for k in ks],
             "-s",
             color=VENDOR,
             lw=2,
-            ms=7,
+            ms=5,
             label="torch_npu (allocating)",
         )
-    axis.set_xscale("log", base=2)
-    axis.set_xticks(ks)
-    axis.set_xticklabels([str(k) for k in ks])
+        worst_k = min(shared, key=shared.get)
+        if shared[worst_k] < 1000:
+            axis.annotate(
+                f"vendor collapses at K={worst_k}\n({shared[worst_k]:.0f} GB/s)",
+                (ks.index(worst_k), shared[worst_k] / 1000),
+                textcoords="offset points",
+                xytext=(12, 4),
+                fontsize=8,
+                color=VENDOR,
+            )
+    axis.set_xticks(list(xs))
+    axis.set_xticklabels([str(k) for k in ks], rotation=55, ha="right", fontsize=7.5)
     axis.set_xlabel("block width K")
     axis.set_ylabel("bandwidth (TB/s)")
-    axis.set_title("bf16 → MXFP4 bandwidth, batch 65536")
+    axis.set_ylim(0, None)
+    axis.set_title("bf16 → MXFP4 bandwidth, constant 64 Mi elements per launch")
     axis.grid(alpha=0.25)
     axis.legend(loc="lower right", frameon=False, fontsize=9)
 
@@ -129,21 +143,28 @@ def draw_ratio(axis, rows):
         fontsize=9,
         color=NEUTRAL,
     )
-    colors = [OURS if r >= 1.0 else VENDOR for r in ratio]
-    axis.bar([str(k) for k in shared], ratio, color=colors, width=0.6)
+    # dots on a deviation axis, not bars: a truncated bar axis misleads
     for x, r in enumerate(ratio):
-        axis.annotate(
-            f"{r:.2f}",
-            (x, r),
-            textcoords="offset points",
-            xytext=(0, 4 if r >= 1 else -12),
-            ha="center",
-            fontsize=9,
-        )
-    axis.set_ylim(0, max(ratio) * 1.25)
+        axis.plot([x, x], [1.0, min(r, 1.35)], color=OURS, lw=1.6, zorder=1)
+        axis.plot([x], [min(r, 1.35)], "o", color=OURS, ms=6, zorder=2)
+        if r > 1.15:
+            axis.annotate(
+                f"{r:.2f}" + ("" if r < 2 else " ↑"),
+                (x, min(r, 1.35)),
+                textcoords="offset points",
+                xytext=(0, 6),
+                ha="center",
+                fontsize=7.5,
+            )
+    axis.set_xticks(range(len(shared)))
+    axis.set_xticklabels([str(k) for k in shared], rotation=55, ha="right", fontsize=8)
+    # K=96 is ~7x and would flatten the rest; clip and say so
+    shown = [r for r in ratio if r < 2.0]
+    axis.set_ylim(0.9, max(shown) * 1.06 if shown else 1.3)
     axis.set_xlabel("block width K")
     axis.set_ylabel("ours / torch_npu")
     axis.set_title("apples-to-apples: both allocating outputs")
+    axis.axhline(1.0, ls="--", color=NEUTRAL, lw=1.2, zorder=0)
     axis.grid(axis="y", alpha=0.25)
 
 
