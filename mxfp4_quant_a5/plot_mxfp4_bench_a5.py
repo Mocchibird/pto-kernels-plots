@@ -23,6 +23,10 @@ shared axis each one misleads rather than informs:
 Both stay in the CSV, and benchmark.py uses the copy as the sanity bound that
 catches an impossible rate.
 
+Widths whose block count is ODD are absent by design, not by accident: torch_npu
+pads its scale array there and drops onto a slow path, so comparing on them would
+measure a shape it does not properly support. See benchmark.py.
+
 Timing is a saturated queue (N launches between two synchronizes, wall clock / N),
 not per-launch events: per-launch torch.npu.Event pairs on this box returned
 82.0/27.7/7.6/24.0 us for one and the same launch. These are therefore bandwidth
