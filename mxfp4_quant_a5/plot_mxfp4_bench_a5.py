@@ -64,6 +64,7 @@ def load(path):
                         "gbs": float(r["gbs"]),
                         "micros": float(r["micros"]),
                         "status": (r.get("status") or "ok").strip(),
+                        "sweeps": int(r.get("sweeps") or 0),
                     }
                 )
     return rows
@@ -187,8 +188,9 @@ def main():
     fig.text(
         0.5,
         0.925,
-        "steady-state throughput: 40 launches per wall-clock bracket, "
-        "9 brackets, median of 3 sweeps — not single-launch latency",
+        "steady-state throughput: 40 launches per wall-clock bracket, 9 brackets, "
+        + (f"median of {rows[0]['sweeps']} sweeps" if rows[0]["sweeps"] else "median")
+        + " — not single-launch latency",
         ha="center",
         fontsize=8.5,
         color=NEUTRAL,
