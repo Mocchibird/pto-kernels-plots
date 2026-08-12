@@ -6,6 +6,16 @@ This repository contains plotting scripts, generated figures, and experiment org
 
 ## Example results
 
+### MXFP4 quantization on A5 (`mxfp4_quant_a5`, PR #223)
+
+![MXFP4 vs torch_npu and PTO TQuant on CANN 9.1.0-beta.3](mxfp4_quant_a5/mxfp4_beta3_by_k.png)
+
+bf16 → MXFP4 on CANN 9.1.0-beta.3 with PTO 9.1.0. Two comparisons kept apart
+because they use different call paths: ours vs PTO's `TQuant` tile op on a bare
+`ctypes` launch, which isolates compute, and ours vs `torch_npu` through the
+Python API, where both allocate. `mxfp4_quant_a5/plot_mxfp4_beta3.py` regenerates
+every figure from the CSVs beside it.
+
 ![PTO-ISA vs AscendC speedup heatmap for Hadamard+Quant](fast_hadamard/int8_quant/hadamard_quant_speedup_heatmap_new.png)
 
 Median PTO-ISA speedup over AscendC for Hadamard + Quant across batch size and row length.  
