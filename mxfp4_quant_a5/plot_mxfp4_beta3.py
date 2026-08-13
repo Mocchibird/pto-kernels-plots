@@ -39,12 +39,17 @@ OURS_API = "#7fb3c4"
 VENDOR = "#b4611a"
 TQUANT = "#5c6f3a"
 NEUTRAL = "#6b7a85"
+ALL_ROWS, PANEL_KEYS, PANEL_AXIS = [], (), "k"
 KS = (64, 128, 256, 512, 1024, 2048)
 BS = (4096, 8192, 16384, 32768, 65536, 131072)
 
 
 def load(paths, axis):
-    rows = [r for p in paths for r in csv.DictReader(open(p, encoding="utf-8"))]
+    rows = []
+    for path in paths:
+        for row in csv.DictReader(open(path, encoding="utf-8")):
+            row["process"] = str(path)
+            rows.append(row)
     keys = KS if axis == "k" else BS
 
     def med(pair, contender, field):
@@ -77,10 +82,50 @@ def load(paths, axis):
     return med, resolved, rows, keys
 
 
+def per_process(rows, pair, contender, keys, axis):
+    """Ratios grouped by process. A within-process bootstrap cannot see a
+    contender that picks a different kernel from one process to the next, so
+    the published interval is this spread instead."""
+    out = {}
+    for k in keys:
+        by_proc = {}
+        for r in rows:
+            if (
+                r["pair"] == pair
+                and r["contender"] == contender
+                and int(r[axis]) == k
+            ):
+                by_proc.setdefault(r["process"], []).append(float(r["speedup"]))
+        values = [statistics.median(v) for v in by_proc.values()]
+        if values:
+            out[k] = values
+    return out
+
+
 def bandwidth_panel(axis, med, keys, xlabel, series, title):
     for pair, contender, label, colour, marker in series:
         values = med(pair, contender, "gbs")
         keys = sorted(values)
+        # one faint point per process: the median line alone would hide a
+        # contender that runs at two different speeds on different processes
+        for key in keys:
+            per = [
+                float(r["gbs"])
+                for r in ALL_ROWS
+                if r["pair"] == pair
+                and r["contender"] == contender
+                and int(r[PANEL_AXIS]) == key
+            ]
+            if len(per) > 1 and (max(per) - min(per)) / min(per) > 0.05:
+                axis.plot(
+                    [key] * len(per),
+                    [v / 1000 for v in per],
+                    "_",
+                    color=colour,
+                    ms=9,
+                    alpha=0.55,
+                    zorder=1,
+                )
         axis.plot(
             keys,
             [values[k] / 1000 for k in keys],
@@ -101,10 +146,19 @@ def bandwidth_panel(axis, med, keys, xlabel, series, title):
 
 
 def ratio_panel(axis, med, resolved, pair, contender, rival, colour, title, xlabel):
-    ratio = med(pair, contender, "speedup")
-    low = med(pair, contender, "speedup_lo")
-    high = med(pair, contender, "speedup_hi")
-    flags = resolved(pair, contender)
+    del resolved  # superseded by the cross-process spread below
+    spread = per_process(ALL_ROWS, pair, contender, PANEL_KEYS, PANEL_AXIS)
+    ratio = {k: statistics.median(v) for k, v in spread.items()}
+    low = {k: min(v) for k, v in spread.items()}
+    high = {k: max(v) for k, v in spread.items()}
+    # firm when a clear majority of processes land on the same side of parity;
+    # unanimity would let one rare vendor fast path erase a 14-of-15 result
+    flags = {
+        k: max(
+            sum(1 for x in v if x > 1.0), sum(1 for x in v if x < 1.0)
+        ) >= 0.8 * len(v)
+        for k, v in spread.items()
+    }
     keys = sorted(ratio)
     axis.axhline(1.0, ls="--", color=NEUTRAL, lw=1.6)
     for position, k in enumerate(keys):
@@ -128,7 +182,8 @@ def ratio_panel(axis, med, resolved, pair, contender, rival, colour, title, xlab
             capsize=3,
         )
         axis.annotate(
-            f"{ratio[k]:.2f}",
+            f"{ratio[k]:.2f}\n{sum(1 for x in spread[k] if (ratio[k] > 1) == (x > 1))}"
+            f"/{len(spread[k])}",
             (position, max(high[k], ratio[k])),
             textcoords="offset points",
             xytext=(0, 5),
@@ -165,11 +220,18 @@ def main():
         override = tuple(int(v) for v in args.keys.split(","))
         KS = BS = override
     med, resolved, rows, keys = load(args.csv, args.axis)
+    global ALL_ROWS, PANEL_KEYS, PANEL_AXIS
+    ALL_ROWS, PANEL_KEYS, PANEL_AXIS = rows, keys, args.axis
     xlabel = "block width K" if args.axis == "k" else "rows per launch"
     exact = all(
         float(r["packed_match"]) == 1.0 and float(r["scale_match"]) == 1.0 for r in rows
     )
-    processes = len(args.csv)
+    # N differs per pair: only some runs carry the TQuant arm, and the extra
+    # torch_npu processes cover the narrow widths only. Each bar is labelled n/N.
+    processes = {
+        pair: len({r["process"] for r in rows if r["pair"] == pair})
+        for pair in sorted({r["pair"] for r in rows})
+    }
     brackets = int(statistics.median(float(r["brackets_n"]) for r in rows))
 
     if args.only:
@@ -269,8 +331,11 @@ def main():
     figure.text(
         0.5,
         0.925,
-        f"median paired per-bracket ratio over {processes} processes x {brackets} "
-        f"interleaved brackets, rotating order; hollow = interval spans parity"
+        f"median paired per-bracket ratio over "
+        f"{'/'.join(f'{v} ({k})' for k, v in processes.items())} processes x {brackets} "
+        f"interleaved brackets, rotating order; bar = median process, "
+        f"interval = full spread ACROSS processes, n/N = processes agreeing; "
+        f"hollow = under 80% agreed"
         + ("; every arm bit-exact" if exact else "; SOME ARMS NOT BIT-EXACT"),
         ha="center",
         fontsize=8.5,

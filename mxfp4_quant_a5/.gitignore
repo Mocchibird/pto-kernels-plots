@@ -1,0 +1,25 @@
+# Local scratch from exploratory runs. The published data is the pairs_*.csv set
+# that benchmark.py emits; everything here was superseded by it and is kept only
+# on the machine that measured it.
+.ruff_cache/
+b3_*.csv
+beta3_*_kbench.csv
+bpairs_*.csv
+inv*_kbench.csv
+rot*_kbench.csv
+pairs_[0-9].csv
+peak_[0-9].csv
+mxfp4_kbench.csv
+mxfp4_bbench.csv
+mxfp4_simple_*.csv
+mxfp4_threeway_*
+mxfp4_tquant_*.csv
+mxfp4_aclnn_*
+mxfp4_decompose_*.csv
+mxfp4_bandwidth.png
+mxfp4_vs_*.png
+mxfp4_beta3_three_panel.png
+gen_pr_assets.py
+plot_mxfp4_aclnn_a5.py
+plot_mxfp4_bench_a5.py
+plot_mxfp4_threeway_a5.py
