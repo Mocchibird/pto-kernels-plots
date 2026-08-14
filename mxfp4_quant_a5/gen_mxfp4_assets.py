@@ -20,6 +20,7 @@ def read(pattern):
 rows = read(K_CSV) + read(M_CSV)
 brows = read(B_CSV)
 assert rows and brows, "no CSVs matched the benchmark.py output contract"
+mprocs = len(list(D.glob(M_CSV)))  # extra torch_npu processes at narrow K
 def nproc(pair, src=None, keys=None, axis='k'):
     src = rows if src is None else src
     keys = KS if keys is None else keys
@@ -70,18 +71,17 @@ brackets = int(statistics.median(float(r['brackets_n']) for r in rows))
 exact = all(float(r['packed_match'])==1.0 and float(r['scale_match'])==1.0 for r in rows)
 
 def table(a, b, ratio, lo, hi, flags, la, lb, keys=None, header="K", ag=None):
+    """Just the measured bandwidths. The ratio, the cross-process spread and the
+    agreement count were dropped as more detail than the result needs; they are
+    all still recoverable from the CSVs."""
+    del ratio, lo, hi, flags, ag
     keys = KS if keys is None else keys
     head = f"| {header} | " + " | ".join(str(k) for k in keys) + " |"
-    rule = "|---" * (len(keys)+1) + "|"
+    rule = "|---" * (len(keys) + 1) + "|"
     return "\n".join([head, rule,
         f"| {la} (GB/s) | " + " | ".join(f"**{a[k]:.0f}**" for k in keys) + " |",
-        f"| {lb} (GB/s) | " + " | ".join(f"{b[k]:.0f}" for k in keys) + " |",
-        f"| ratio | " + " | ".join(
-            f"**{ratio[k]:.2f}**" + ("" if flags[k] else "&nbsp;(ns)") for k in keys) + " |",
-        f"| across processes | " + " | ".join(
-            f"{lo[k]:.2f}–{hi[k]:.2f}" for k in keys) + " |",
-        f"| processes agreeing | " + " | ".join(
-            f"{ag[k][0]}/{ag[k][1]}" for k in keys) + " |"])
+        f"| {lb} (GB/s) | " + " | ".join(f"{b[k]:.0f}" for k in keys) + " |"])
+
 
 wrapper = raw_o[64] / api_o[64]
 body = f"""## What
@@ -164,22 +164,29 @@ the allocating half.
 
 {table(raw_o, raw_t, rr, rlo, rhi, rfirm, "ours (raw)", "PTO `TQuant`", ag=ragree)}
 
-Parity across the middle of the range and ahead at both ends: \
-**{rr[64]:.2f}x** at K=64 and **{rr[2048]:.2f}x** at K=2048. Replacing our four \
-hand-written passes with the vendor tile op would cost throughput at those two \
-widths and change nothing elsewhere. Output is bit-identical at every shape.
+On par through the middle of the range and ahead at both ends -- \
+**{rr[64]:.2f}x** at K=64 and **{rr[2048]:.2f}x** at K=2048. Since the two builds \
+differ only in the compute passes, that gap is compute, not DMA. Output is \
+bit-identical at every shape.
 
 ### vs `torch_npu` — user-facing, both allocating
 
 {table(api_o, api_v, ar, alo, ahi, afirm, "ours (API)", "`torch_npu`", ag=aagree)}
 
-Ahead at K≤256 (**{ar[64]:.2f}x**–**{ar[256]:.2f}x**) and at K=1024, behind at \
-K=512 (**{ar[512]:.2f}x**) and marginally at K=2048 (**{ar[2048]:.2f}x**). The \
-K=512 deficit reproduced in every process: beta.3's vendor kernel is genuinely \
-faster there, at exactly two of its 256-element column tiles.
+Ahead at K≤256 (**{ar[64]:.2f}x**–**{ar[256]:.2f}x**) and at K=1024; behind at \
+K=512 (**{ar[512]:.2f}x**) and marginally at K=2048 (**{ar[2048]:.2f}x**). One \
+caveat worth stating: `torch_npu` is not a stable baseline at narrow widths -- it \
+picks a faster kernel in about one process in {mprocs}, and at K=512 it takes that \
+path every time, which is the one width where it clearly wins.
 
 Output is **bit-identical to both vendor implementations at every shape**\
 {'' if exact else ' except where noted'}.
+
+The kernel is written as PTO tiles rather than as a closed op, so the quantizer \
+can be fused into a larger kernel later -- a rotation, a norm or a GEMM epilogue \
+writing MXFP4 directly -- without paying a second pass over HBM. On a \
+memory-bound op that is where the remaining win is, since a standalone quantize \
+already runs at DMA speed.
 """
 bro = med('raw','ours_raw','gbs',brows,BS,'batch')
 brt = med('raw','tquant','gbs',brows,BS,'batch')
@@ -281,27 +288,6 @@ peak_vals = sorted(float(r['gbs']) for r in prows
 peak_spread = 100*(peak_vals[-1]-peak_vals[0])/peak_vals[0]
 nb = (pv[768] + pv[1024]) / 2
 
-body += f"""
-## Is the `torch_npu` peak at K=512 real?
-
-Yes. It is the sharpest feature on either curve and it is the only width where we
-lose meaningfully, so it was worth {pprocs} more processes across the multiples of
-256 around it.
-
-![torch_npu K=512 peak probe](@@FIG_PEAK@@)
-
-{table(po, pv, pr, plo, phi, pf, "ours (API)", "`torch_npu`", PKS, "K", pagree)}
-
-`torch_npu` reaches **{pv[512]:.0f} GB/s** at K=512 against **{nb:.0f}** averaged
-over its neighbours at 768 and 1024 — a **{100*(pv[512]/nb-1):.0f}%** spike, and it
-reproduced in all {pprocs} processes with a cross-process spread of only
-**{peak_spread:.1f}%** ({', '.join(f'{v:.0f}' for v in peak_vals)} GB/s). So it is
-the vendor kernel, not a measurement artifact.
-
-Our own curve is smooth across the same widths, which is why the ratio dips only
-here and at K=1536. Both of those are genuine losses on this toolchain.
-
-"""
 REPRO = f"""
 ## Reproducing the tables
 
@@ -312,25 +298,21 @@ arm needs no extra file:
 {fence}bash
 ./run_benchmark.sh --axis k     --tag 1      # -> build/pairs_k_1.csv
 ./run_benchmark.sh --axis batch --tag 1      # -> build/pairs_batch_1.csv
-# the K=512 probe: the API pair over the multiples of 256 around the peak
-./run_benchmark.sh --axis k --pairs api \\
-    --ks 256,512,768,1024,1280,1536 --tag peak1
-# and the narrow widths in many processes, one tag each, to see whether the
-# vendor arm is stable there -- it is not
+# the narrow widths in several processes, because torch_npu is not stable there
 ./run_benchmark.sh --axis k --pairs api --ks 64,128,256,512 --tag m01
 {fence}
 
-PTO 9.1.0 shipped two different `TQuant_MXFP4_E2M1_Impl` signatures -- the release
-headers added a `bool Exp2DStrided` template parameter that 9.1.0-beta.3 does not
-have -- so `benchmark.py` compiles the variant both ways and keeps whichever the
-local headers accept. Both were exercised: the numbers below come from beta.3, and
-the release form was verified separately on an Ascend 950PR.
-
 Repeat with `--tag 2`, `--tag 3`, ... one process each; every figure here is a
-median over {procs} processes ({pprocs} for the peak probe). Each arm is gated for
-bit-exactness against `torch_npu` before it is timed, so a wrong kernel cannot
-produce a fast number. On CANN 9.0.0 the TQuant arm is skipped with a message --
-9.0.0 has no MXFP4 quantizer -- and the `api` pair still runs.
+median over {procs} processes, and {mprocs} for the narrow widths of the
+`torch_npu` comparison. Each arm is gated bit-exact against `torch_npu` before it
+is timed, so a wrong kernel cannot produce a fast number.
+
+PTO 9.1.0 shipped two `TQuant_MXFP4_E2M1_Impl` signatures -- the release headers
+added a `bool Exp2DStrided` template parameter that 9.1.0-beta.3 does not have --
+so `benchmark.py` compiles the variant both ways and keeps whichever the local
+headers accept. The numbers above come from beta.3; the release form was verified
+separately on an Ascend 950PR. On CANN 9.0.0 the TQuant arm is skipped with a
+message, since 9.0.0 has no MXFP4 quantizer, and the `torch_npu` pair still runs.
 
 Plotting lives in the companion
 [`pto-kernels-plots`](https://github.com/Mocchibird/pto-kernels-plots/tree/main/mxfp4_quant_a5)
@@ -338,7 +320,6 @@ repo, next to the figures and the raw CSVs.
 """
 body += REPRO
 url2 = url.replace("mxfp4_beta3_three_panel", "mxfp4_beta3_by_batch")
-url3 = url.replace("mxfp4_beta3_three_panel", "mxfp4_beta3_peak")
 url = url.replace("mxfp4_beta3_three_panel", "mxfp4_beta3_by_k")
 def inline(name):
     return "data:image/png;base64," + base64.b64encode((D / name).read_bytes()).decode()
@@ -354,20 +335,17 @@ if OUT_README is not None:
               + body.split("## What\n\n", 1)[1].replace(
                   "## Files (`examples/jit_cpp/mxfp4_quant_a5/`)", "## Files"))
     readme = readme.replace("@@FIG_K@@", url).replace("@@FIG_BATCH@@", url2)
-    readme = readme.replace("@@FIG_PEAK@@", url3)
     assert readme.count("## Reproducing the tables") == 1
     assert "@@FIG" not in readme
     # end-of-file-fixer wants exactly one trailing newline
     OUT_README.write_text(readme.rstrip() + chr(10), encoding="utf-8")
     print(f"wrote {OUT_README}")
 
-for target, k_src, b_src, p_src in (
-    (OUT_BODY, url, url2, url3),
-    (OUT_ART, inline("mxfp4_beta3_by_k.png"), inline("mxfp4_beta3_by_batch.png"),
-     inline("mxfp4_beta3_peak.png")),
+for target, k_src, b_src in (
+    (OUT_BODY, url, url2),
+    (OUT_ART, inline("mxfp4_beta3_by_k.png"), inline("mxfp4_beta3_by_batch.png")),
 ):
-    text = (body.replace("@@FIG_K@@", k_src).replace("@@FIG_BATCH@@", b_src)
-                .replace("@@FIG_PEAK@@", p_src))
+    text = body.replace("@@FIG_K@@", k_src).replace("@@FIG_BATCH@@", b_src)
     assert "@@FIG" not in text, "a figure placeholder survived"
     target.write_text(text, encoding="utf-8")
 print(f"wrote {OUT_BODY} and {OUT_ART}")
@@ -418,8 +396,6 @@ against a Python wrapper invents a 1.67x that does not exist.
   # here (needs only matplotlib)
   python plot_mxfp4_beta3.py --csv <path>/build/pairs_k_*.csv     --out mxfp4_beta3_by_k.png
   python plot_mxfp4_beta3.py --csv <path>/build/pairs_batch_*.csv --out mxfp4_beta3_by_batch.png --axis batch
-  python plot_mxfp4_beta3.py --csv <path>/build/pairs_k_peak*.csv --out mxfp4_beta3_peak.png \\
-      --only api --keys 256,512,768,1024,1280,1536
   {fence}
 
 All numbers: one Ascend 950 / A5 device, **CANN 9.1.0-beta.3 with PTO 9.1.0** (what
@@ -498,7 +474,7 @@ Both arms are one Python call that allocates its own outputs.
 
 Ahead at {api_win} of {len(KS)} widths; behind at {", ".join("K=" + str(k) for k in api_loss) if api_loss else "none"}.
 Those losses are real on this toolchain, and the K=512 one has a specific cause --
-see the peak probe below.
+see below.
 
 One caveat that matters for anyone repeating this: `torch_npu` dispatches into
 `libopapi_nn.so` from whatever CANN build is on `ASCEND_HOME_PATH`. It is **not** a
@@ -521,8 +497,6 @@ shape.
 It is the sharpest feature on either curve and the only width where we lose
 meaningfully, so it got {pprocs} more processes across the multiples of 256 around
 it.
-
-![the torch_npu K=512 peak, probed](mxfp4_beta3_peak.png)
 
 {table(po, pv, pr, plo, phi, pf, "ours (API)", "`torch_npu`", PKS, "K", pagree)}
 

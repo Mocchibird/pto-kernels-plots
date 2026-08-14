@@ -39,8 +39,6 @@ against a Python wrapper invents a 1.67x that does not exist.
   # here (needs only matplotlib)
   python plot_mxfp4_beta3.py --csv <path>/build/pairs_k_*.csv     --out mxfp4_beta3_by_k.png
   python plot_mxfp4_beta3.py --csv <path>/build/pairs_batch_*.csv --out mxfp4_beta3_by_batch.png --axis batch
-  python plot_mxfp4_beta3.py --csv <path>/build/pairs_k_peak*.csv --out mxfp4_beta3_peak.png \
-      --only api --keys 256,512,768,1024,1280,1536
   ```
 
 All numbers: one Ascend 950 / A5 device, **CANN 9.1.0-beta.3 with PTO 9.1.0** (what
@@ -107,9 +105,6 @@ not even a footprint difference). Whatever is left is compute.
 |---|---|---|---|---|---|---|
 | ours (raw) (GB/s) | **2074** | **2428** | **3069** | **3160** | **3210** | **3078** |
 | PTO `TQuant` (GB/s) | 1964 | 2440 | 3061 | 3170 | 3205 | 2681 |
-| ratio | **1.05** | **1.00** | **1.01** | **1.00**&nbsp;(ns) | **1.01** | **1.13** |
-| across processes | 1.05–1.06 | 1.00–1.00 | 1.00–1.03 | 1.00–1.00 | 1.00–1.02 | 1.11–1.14 |
-| processes agreeing | 3/3 | 3/3 | 3/3 | 2/3 | 3/3 | 3/3 |
 
 Ahead or level at every width, by -0% to
 +13%. That is the honest shape of this result: the
@@ -125,13 +120,10 @@ Both arms are one Python call that allocates its own outputs.
 |---|---|---|---|---|---|---|
 | ours (API) (GB/s) | **685** | **1389** | **2777** | **3118** | **3183** | **2883** |
 | `torch_npu` (GB/s) | 614 | 1251 | 2532 | 3385 | 3061 | 2936 |
-| ratio | **1.11** | **1.11** | **1.08** | **0.92** | **1.04** | **0.98** |
-| across processes | 0.85–1.20 | 0.83–1.18 | 0.85–1.14 | 0.89–0.96 | 1.03–1.04 | 0.98–0.99 |
-| processes agreeing | 16/18 | 16/18 | 16/18 | 18/18 | 3/3 | 3/3 |
 
 Ahead at 4 of 6 widths; behind at K=512, K=2048.
 Those losses are real on this toolchain, and the K=512 one has a specific cause --
-see the peak probe below.
+see below.
 
 One caveat that matters for anyone repeating this: `torch_npu` dispatches into
 `libopapi_nn.so` from whatever CANN build is on `ASCEND_HOME_PATH`. It is **not** a
@@ -149,17 +141,11 @@ shape.
 |---|---|---|---|---|---|---|
 | ours (raw) (GB/s) | **3200** | **3150** | **3266** | **3046** | **2982** | **2876** |
 | PTO `TQuant` (GB/s) | 3038 | 3140 | 3119 | 2827 | 2628 | 2623 |
-| ratio | **1.00**&nbsp;(ns) | **1.00**&nbsp;(ns) | **1.05** | **1.07** | **1.12** | **1.10** |
-| across processes | 1.00–1.18 | 1.00–1.00 | 1.00–1.05 | 1.07–1.09 | 1.12–1.13 | 1.10–1.10 |
-| processes agreeing | 2/3 | 2/3 | 3/3 | 3/3 | 3/3 | 3/3 |
 
 | rows | 4096 | 8192 | 16384 | 32768 | 65536 | 131072 |
 |---|---|---|---|---|---|---|
 | ours (API) (GB/s) | **2780** | **3193** | **3176** | **2869** | **2833** | **2866** |
 | `torch_npu` (GB/s) | 2511 | 3210 | 3098 | 2930 | 2821 | 2699 |
-| ratio | **1.14**&nbsp;(ns) | **1.00**&nbsp;(ns) | **1.00** | **0.98** | **1.02**&nbsp;(ns) | **1.06** |
-| across processes | 0.92–1.16 | 0.99–1.02 | 1.00–1.01 | 0.98–0.98 | 1.00–1.02 | 1.06–1.06 |
-| processes agreeing | 2/3 | 2/3 | 3/3 | 3/3 | 2/3 | 3/3 |
 
 # Is the torch_npu peak at K=512 real?
 
@@ -167,15 +153,10 @@ It is the sharpest feature on either curve and the only width where we lose
 meaningfully, so it got 5 more processes across the multiples of 256 around
 it.
 
-![the torch_npu K=512 peak, probed](mxfp4_beta3_peak.png)
-
 | K | 256 | 512 | 768 | 1024 | 1280 | 1536 |
 |---|---|---|---|---|---|---|
 | ours (API) (GB/s) | **2753** | **3095** | **3218** | **3160** | **2979** | **2845** |
 | `torch_npu` (GB/s) | 2356 | 3395 | 2964 | 3037 | 2867 | 2960 |
-| ratio | **1.15** | **0.93** | **1.11** | **1.03** | **1.06** | **0.97** |
-| across processes | 0.86–1.23 | 0.90–0.98 | 1.05–1.12 | 1.02–1.04 | 1.05–1.07 | 0.96–0.98 |
-| processes agreeing | 4/5 | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 |
 
 `torch_npu` reaches **3395 GB/s** at K=512 against **3001** averaged
 over its neighbours at 768 and 1024 -- a **13%** spike
