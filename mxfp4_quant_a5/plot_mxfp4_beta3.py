@@ -149,6 +149,10 @@ def main():
         (
             ("raw", "ours_raw", "ours", OURS, "-o"),
             ("raw", "tquant", "PTO TQuant", TQUANT, "-^"),
+            # the DMA floor, drawn only when the CSVs carry it: a memory-bound op
+            # is judged against a plain copy of the same bytes, as
+            # fast_hadamard_a5 does
+            ("raw", "d2d_copy", "torch d2d copy", NEUTRAL, "--"),
         ),
         "vs PTO TQuant — raw launch, preallocated\n"
         "(same source, only the compute passes swapped)",
