@@ -126,67 +126,34 @@ use. Fixed batch of 65,536 rows. Bandwidth counts `2K` read + `K/2 + K/32` \
 written = 2.53125 B/element, one formula for every arm.
 
 Each contender is timed in {brackets} brackets, interleaved one bracket at a time \
-with a rotating order, and the whole sweep is repeated in independent processes: \
-{procs} carry the TQuant arm, and `torch_npu` gets \
-{max(v for v in nproc('api').values())} at the narrow widths. `ratio` is the \
-median process, `across processes` the full spread between them, and \
-`processes agreeing` how many landed on the majority side of parity; `(ns)` marks \
-under 80% agreement. A within-process confidence interval is deliberately not \
-quoted, because `torch_npu` selects a different kernel in some processes than in \
-others and no within-process statistic can see that.
+with a rotating order so neither arm absorbs the other's cache eviction. Every \
+number is the median across independent processes -- \
+{max(v for v in nproc('api').values())} of them at the narrow widths, where \
+`torch_npu` is not stable. The raw CSVs carry the per-process spread and the \
+per-bracket ratios for anyone who wants them.
 
 ![MXFP4 on A5, CANN 9.1.0-beta.3](@@FIG_K@@)
 
-### Two comparisons, because there are two questions
+{table(api_o, api_v, ar, alo, ahi, afirm, "ours", "`torch_npu`", ag=aagree)}
 
-The kernel can be called two ways, and mixing them makes any comparison \
-meaningless:
+Ahead at K≤256 (**{ar[256]:.2f}x**–**{ar[64]:.2f}x**) and at K=1024; behind at \
+K=512 (**{ar[512]:.2f}x**) and marginally at K=2048 (**{ar[2048]:.2f}x**). Both \
+arms are one Python call that allocates its own outputs -- `torch_npu` has no \
+preallocated entry point, and pairing a bare launch against an allocating call is \
+what invented a 1.67x in an earlier version of this benchmark.
 
-| arm | call path |
-|---|---|
-| **raw launch** | a bare `ctypes` launch, outputs preallocated. No Python \
-wrapper. |
-| **API** | `quant(x)` — the documented entry point: argument checks, padding \
-arithmetic, two `torch.empty` allocations, output slicing. |
+One caveat: `torch_npu` is not a stable baseline at narrow widths. It picks a \
+faster kernel in about one process in {mprocs}, and at K=512 it takes that path \
+every time, which is the one width where it clearly wins.
 
-`torch_npu` allocates inherently and offers no preallocated mode, so it is only \
-comparable to our **API** arm. PTO's `TQuant` is reached through the **same bare \
-launch** as our raw arm — the identical source built twice, with only the four \
-compute passes swapped for the tile op — so tiling, buffering and every \
-`TLOAD`/`TSTORE` are byte-identical and that pairing isolates **compute**.
+> **Against PTO's own quantizer.** `benchmark.py` also builds this source a second \
+time with `-DMXFP4_TQUANT`, swapping our four compute passes for PTO 9.1.0's \
+`TQuant_MXFP4_E2M1` tile op and leaving tiling, buffering and every \
+`TLOAD`/`TSTORE` identical. On that matched raw launch ours is **on par or a \
+little ahead at every width** -- {rr[64]:.2f}x at K=64, ~{rr[512]:.2f}x through \
+the middle, {rr[2048]:.2f}x at K=2048 -- with bit-identical output. The full data \
+is in the CSVs.
 
-Our wrapper costs **{wrapper:.1f}x** at K=64 ({raw_o[64]:.0f} → {api_o[64]:.0f} \
-GB/s) and disappears by K=2048, where the kernel runs long enough to hide it. \
-That is an API cost, not a kernel cost, and `quant(x, out=(q, s))` already skips \
-the allocating half.
-
-### vs PTO `TQuant` — compute only, matched raw launch
-
-{table(raw_o, raw_t, rr, rlo, rhi, rfirm, "ours (raw)", "PTO `TQuant`", ag=ragree)}
-
-On par through the middle of the range and ahead at both ends -- \
-**{rr[64]:.2f}x** at K=64 and **{rr[2048]:.2f}x** at K=2048. Since the two builds \
-differ only in the compute passes, that gap is compute, not DMA. Output is \
-bit-identical at every shape.
-
-### vs `torch_npu` — user-facing, both allocating
-
-{table(api_o, api_v, ar, alo, ahi, afirm, "ours (API)", "`torch_npu`", ag=aagree)}
-
-Ahead at K≤256 (**{ar[64]:.2f}x**–**{ar[256]:.2f}x**) and at K=1024; behind at \
-K=512 (**{ar[512]:.2f}x**) and marginally at K=2048 (**{ar[2048]:.2f}x**). One \
-caveat worth stating: `torch_npu` is not a stable baseline at narrow widths -- it \
-picks a faster kernel in about one process in {mprocs}, and at K=512 it takes that \
-path every time, which is the one width where it clearly wins.
-
-Output is **bit-identical to both vendor implementations at every shape**\
-{'' if exact else ' except where noted'}.
-
-The kernel is written as PTO tiles rather than as a closed op, so the quantizer \
-can be fused into a larger kernel later -- a rotation, a norm or a GEMM epilogue \
-writing MXFP4 directly -- without paying a second pass over HBM. On a \
-memory-bound op that is where the remaining win is, since a standalone quantize \
-already runs at DMA speed.
 """
 bro = med('raw','ours_raw','gbs',brows,BS,'batch')
 brt = med('raw','tquant','gbs',brows,BS,'batch')
@@ -208,30 +175,16 @@ baf = firm('api','torch_npu',brows,BS,'batch')
 body += f"""
 ## Rows per launch, at K=4096
 
-The same two comparisons over the batch list `fast_hadamard_a5` (#221) uses. Only
-4096 and 8192 of those values are legal widths here, so this is the batch axis.
+The same comparison over the batch list `fast_hadamard_a5` (#221) uses. Only 4096
+and 8192 of those values are legal widths here, so this is the batch axis.
 
 ![MXFP4 on A5 by batch, CANN 9.1.0-beta.3](@@FIG_BATCH@@)
 
-### vs PTO `TQuant` — compute only
+{table(bao, bav, bar, balo, bahi, baf, "ours", "`torch_npu`", BS, "rows", baagree)}
 
-{table(bro, brt, brr, brlo, brhi, brf, "ours (raw)", "PTO `TQuant`", BS, "rows", bragree)}
-
-Never behind: parity at 8192 and ahead by up to **{max(brr.values()):.2f}x**. Taken
-with the width sweep, our four passes match or beat the vendor tile op at every
-shape measured on either axis.
-
-### vs `torch_npu` — user-facing
-
-{table(bao, bav, bar, balo, bahi, baf, "ours (API)", "`torch_npu`", BS, "rows", baagree)}
-
-Between **{min(bar.values()):.2f}x** and **{max(bar.values()):.2f}x**. The batch=4096
-row is the least firm on this axis: cross-process spread there is 15.7% for our raw
-arm and 24.7% for `torch_npu`, against under 5% everywhere else.
+Between **{min(bar.values()):.2f}x** and **{max(bar.values()):.2f}x**. Against \
+`TQuant` on the same axis ours runs {min(brr.values()):.2f}x-{max(brr.values()):.2f}x.
 """
-
-url = ("https://raw.githubusercontent.com/Mocchibird/pto-kernels-plots/main/"
-       "mxfp4_quant_a5/mxfp4_beta3_three_panel.png")
 
 # --- the vendor's two modes, from the many-process narrow-width runs -----
 MKS = (64, 128, 256, 512)
@@ -261,7 +214,6 @@ for k in MKS:
 mode_table = "\n".join([
     "| K | processes | main mode, GB/s (n) | second mode, GB/s (n) | separation |",
     "|---|---|---|---|---|", *mode_rows])
-mprocs = len(list(D.glob(M_CSV)))
 
 ours_spreads = []
 for k in MKS:
@@ -319,6 +271,8 @@ Plotting lives in the companion
 repo, next to the figures and the raw CSVs.
 """
 body += REPRO
+url = ("https://raw.githubusercontent.com/Mocchibird/pto-kernels-plots/main/"
+       "mxfp4_quant_a5/mxfp4_beta3_three_panel.png")
 url2 = url.replace("mxfp4_beta3_three_panel", "mxfp4_beta3_by_batch")
 url = url.replace("mxfp4_beta3_three_panel", "mxfp4_beta3_by_k")
 def inline(name):

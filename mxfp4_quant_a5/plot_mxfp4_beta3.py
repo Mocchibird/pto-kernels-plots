@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
-"""Plot achieved bandwidth for mxfp4_quant_a5 on Ascend A5.
+"""Plot achieved bandwidth for mxfp4_quant_a5 against torch_npu on Ascend A5.
 
-Two panels, because there are two different comparisons here and mixing them is
-what produced a bogus 1.67x in an earlier version of this benchmark:
-
-  left   ours vs PTO TQuant, both a bare ctypes launch into the same source built
-         twice with only the four compute passes swapped, outputs preallocated.
-         Identical tiling, buffering and DMA, so this isolates COMPUTE.
-  right  ours vs torch_npu, both one Python call that allocates its own outputs.
-         torch_npu has no other mode, so this is the only fair user-facing pairing.
+Both arms are one Python call that allocates its own outputs, which is the only
+fair pairing: torch_npu has no preallocated entry point, and pairing a bare
+ctypes launch against an allocating call invented a 1.67x in an earlier version of
+this benchmark.
 
 Each point is the median across independent processes. Where a contender's
 processes disagree by more than 5% a faint tick is drawn per process, because
@@ -139,51 +135,34 @@ def main():
         for pair in sorted({r["pair"] for r in rows})
     }
 
-    figure, axes = plt.subplots(1, 2, figsize=(12.5, 4.8))
+    figure, axis = plt.subplots(1, 1, figsize=(7.2, 4.6))
     bandwidth_panel(
-        axes[0],
+        axis,
         med,
         rows,
         args.axis,
         xlabel,
         (
-            ("raw", "ours_raw", "ours", OURS, "-o"),
-            ("raw", "tquant", "PTO TQuant", TQUANT, "-^"),
-            # the DMA floor, drawn only when the CSVs carry it: a memory-bound op
-            # is judged against a plain copy of the same bytes, as
-            # fast_hadamard_a5 does
-            ("raw", "d2d_copy", "torch d2d copy", NEUTRAL, "--"),
-        ),
-        "vs PTO TQuant — raw launch, preallocated\n"
-        "(same source, only the compute passes swapped)",
-    )
-    bandwidth_panel(
-        axes[1],
-        med,
-        rows,
-        args.axis,
-        xlabel,
-        (
-            ("api", "ours", "ours", OURS_API, "-o"),
+            ("api", "ours", "ours", OURS, "-o"),
             ("api", "torch_npu", "torch_npu", VENDOR, "-s"),
         ),
-        "vs torch_npu — Python API, allocating\n(both allocate, one call each)",
+        "",
     )
     figure.suptitle(
-        "mxfp4_quant_a5 on Ascend A5 (dav-c310) — CANN 9.1.0-beta.3, PTO 9.1.0"
+        "mxfp4_quant_a5 vs torch_npu on Ascend A5 (dav-c310)\n"
+        "CANN 9.1.0-beta.3, both allocating, one Python call each",
+        fontsize=11,
     )
     figure.text(
         0.5,
-        0.9,
-        "median of "
-        + "/".join(f"{v} ({k})" for k, v in procs.items())
-        + " independent processes"
+        0.855,
+        f"median of {max(procs.values())} independent processes"
         + ("; every arm bit-exact" if exact else "; SOME ARMS NOT BIT-EXACT"),
         ha="center",
         fontsize=8.5,
         color=NEUTRAL,
     )
-    figure.tight_layout(rect=(0, 0, 1, 0.87))
+    figure.tight_layout(rect=(0, 0, 1, 0.84))
     figure.savefig(args.out, dpi=150, bbox_inches="tight")
     plt.close(figure)
     print(f"wrote {args.out}")
