@@ -58,8 +58,8 @@ def firm(pair, contender, src=None, keys=None, axis='k'):
 
 raw_o, raw_t = med('raw','ours_raw','gbs'), med('raw','tquant','gbs')
 api_o, api_v = med('api','ours','gbs'), med('api','torch_npu','gbs')
-rr = {k: statistics.median(v) for k, v in per_proc('raw','tquant').items()}
-ar = {k: statistics.median(v) for k, v in per_proc('api','torch_npu').items()}
+rr = {k: raw_o[k] / raw_t[k] for k in KS}  # matches the published rows
+ar = {k: api_o[k] / api_v[k] for k in KS}  # matches the published rows
 rspread, aspread = per_proc('raw','tquant'), per_proc('api','torch_npu')
 rlo = {k: min(v) for k, v in rspread.items()}
 rhi = {k: max(v) for k, v in rspread.items()}
@@ -159,8 +159,8 @@ bro = med('raw','ours_raw','gbs',brows,BS,'batch')
 brt = med('raw','tquant','gbs',brows,BS,'batch')
 bao = med('api','ours','gbs',brows,BS,'batch')
 bav = med('api','torch_npu','gbs',brows,BS,'batch')
-brr = {k: statistics.median(v) for k, v in per_proc('raw','tquant',brows,BS,'batch').items()}
-bar = {k: statistics.median(v) for k, v in per_proc('api','torch_npu',brows,BS,'batch').items()}
+brr = {k: bro[k] / brt[k] for k in BS}
+bar = {k: bao[k] / bav[k] for k in BS}
 brsp = per_proc('raw','tquant',brows,BS,'batch')
 basp = per_proc('api','torch_npu',brows,BS,'batch')
 brlo = {k: min(v) for k, v in brsp.items()}

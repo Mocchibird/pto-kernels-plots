@@ -8,9 +8,9 @@ once, 0.53125 bytes per element are written, and nothing is reused. So the
 question is not FLOPs but how much of HBM you keep. Our A5 (`dav-c310`) kernel
 reaches **3.21 TB/s**. Against **PTO 9.1.0's own
 `TQuant_MXFP4_E2M1`** on an identical launch it is ahead or level at
-**6 of 6** widths (1.00-1.13x),
+**6 of 6** widths (1.00-1.15x),
 and against **`torch_npu`** on the user-facing path ahead at **4 of
-6** (0.92-1.11x) -- with the caveat
+6** (0.92-1.12x) -- with the caveat
 that `torch_npu` is not a stable baseline at narrow widths: it has a second,
 faster kernel that turns up in about one process in 15, and at K=512 it takes
 that path every time, which is the one width where it clearly beats us. Every arm is
@@ -107,7 +107,7 @@ not even a footprint difference). Whatever is left is compute.
 | PTO `TQuant` (GB/s) | 1964 | 2440 | 3061 | 3170 | 3205 | 2681 |
 
 Ahead or level at every width, by -0% to
-+13%. That is the honest shape of this result: the
++15%. That is the honest shape of this result: the
 vendor's quantizer is good, and on a memory-bound op there is not much room between
 two implementations that both keep the DMA busy. The gap is widest where the
 per-tile compute is a larger share of the tile's time.

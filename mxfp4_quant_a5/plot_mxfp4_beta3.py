@@ -31,6 +31,7 @@ OURS_API = "#7fb3c4"
 VENDOR = "#b4611a"
 TQUANT = "#5c6f3a"
 NEUTRAL = "#6b7a85"
+LAUNCHES_NOTE = "40 launches per wall-clock bracket, 64 brackets"
 KS = (64, 128, 256, 512, 1024, 2048)
 BS = (4096, 8192, 16384, 32768, 65536, 131072)
 
@@ -108,6 +109,45 @@ def bandwidth_panel(axis, med, rows, key_axis, xlabel, series, title):
     axis.legend(loc="lower right", frameon=False, fontsize=8.5)
 
 
+def ratio_panel(axis, med, xlabel):
+    """ours / torch_npu as plain bars, the shape used before the results grew a
+    2x2 grid: one number per width, a dashed parity line, y from zero."""
+    ours = med("api", "ours", "gbs")
+    vendor = med("api", "torch_npu", "gbs")
+    keys = [k for k in sorted(ours) if k in vendor]
+    ratio = [ours[k] / vendor[k] for k in keys]
+    axis.axhline(1.0, ls="--", color=NEUTRAL, lw=1.6)
+    axis.annotate(
+        "parity",
+        (len(keys) - 1, 1.0),
+        textcoords="offset points",
+        xytext=(14, 4),
+        fontsize=9,
+        color=NEUTRAL,
+        annotation_clip=False,
+    )
+    axis.bar(
+        [str(k) for k in keys],
+        ratio,
+        color=[OURS if r >= 1.0 else VENDOR for r in ratio],
+        width=0.6,
+    )
+    for x, r in enumerate(ratio):
+        axis.annotate(
+            f"{r:.2f}",
+            (x, r),
+            textcoords="offset points",
+            xytext=(0, 4 if r >= 1 else -12),
+            ha="center",
+            fontsize=9,
+        )
+    axis.set_ylim(0, max(ratio) * 1.25)
+    axis.set_xlabel(xlabel)
+    axis.set_ylabel("ours / torch_npu")
+    axis.set_title("apples-to-apples: both allocating outputs", fontsize=10)
+    axis.grid(axis="y", alpha=0.25)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--csv", nargs="+", type=Path, required=True)
@@ -135,34 +175,35 @@ def main():
         for pair in sorted({r["pair"] for r in rows})
     }
 
-    figure, axis = plt.subplots(1, 1, figsize=(7.2, 4.6))
+    figure, (left, right) = plt.subplots(1, 2, figsize=(13, 5))
     bandwidth_panel(
-        axis,
+        left,
         med,
         rows,
         args.axis,
         xlabel,
         (
-            ("api", "ours", "ours", OURS, "-o"),
-            ("api", "torch_npu", "torch_npu", VENDOR, "-s"),
+            ("api", "ours", "ours (allocating)", OURS, "-o"),
+            ("api", "torch_npu", "torch_npu (allocating)", VENDOR, "-s"),
         ),
-        "",
+        "bf16 → MXFP4 bandwidth"
+        + (f", batch {max(int(r['batch']) for r in rows):,}" if args.axis == "k" else ""),
     )
+    ratio_panel(right, med, xlabel)
     figure.suptitle(
-        "mxfp4_quant_a5 vs torch_npu on Ascend A5 (dav-c310)\n"
-        "CANN 9.1.0-beta.3, both allocating, one Python call each",
-        fontsize=11,
+        "mxfp4_quant_a5 on Ascend A5 (dav-c310) — bf16 → MXFP4 vs torch_npu",
     )
     figure.text(
         0.5,
-        0.855,
-        f"median of {max(procs.values())} independent processes"
+        0.9,
+        f"steady-state throughput: {LAUNCHES_NOTE}, median of "
+        f"{max(procs.values())} independent processes"
         + ("; every arm bit-exact" if exact else "; SOME ARMS NOT BIT-EXACT"),
         ha="center",
         fontsize=8.5,
         color=NEUTRAL,
     )
-    figure.tight_layout(rect=(0, 0, 1, 0.84))
+    figure.tight_layout(rect=(0, 0, 1, 0.88))
     figure.savefig(args.out, dpi=150, bbox_inches="tight")
     plt.close(figure)
     print(f"wrote {args.out}")
