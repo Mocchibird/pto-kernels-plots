@@ -9,7 +9,6 @@ inv*_kbench.csv
 rot*_kbench.csv
 pairs_[0-9].csv
 peak_[0-9].csv
-mxfp4_kbench.csv
 mxfp4_bbench.csv
 mxfp4_simple_*.csv
 mxfp4_threeway_*
@@ -21,5 +20,5 @@ mxfp4_vs_*.png
 mxfp4_beta3_three_panel.png
 gen_pr_assets.py
 plot_mxfp4_aclnn_a5.py
-plot_mxfp4_bench_a5.py
+plot_mxfp4_bench_a5.py  # superseded by plot_mxfp4_ours_vs_torch.py
 plot_mxfp4_threeway_a5.py

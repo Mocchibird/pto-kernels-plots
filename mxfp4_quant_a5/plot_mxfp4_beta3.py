@@ -109,10 +109,10 @@ def bandwidth_panel(axis, med, rows, key_axis, xlabel, series, title):
     axis.legend(loc="lower right", frameon=False, fontsize=8.5)
 
 
-def ratio_panel(axis, med, xlabel):
+def ratio_panel(axis, med, xlabel, arm="api"):
     """ours / torch_npu as plain bars, the shape used before the results grew a
     2x2 grid: one number per width, a dashed parity line, y from zero."""
-    ours = med("api", "ours", "gbs")
+    ours = med("raw", "ours_raw", "gbs") if arm == "raw" else med("api", "ours", "gbs")
     vendor = med("api", "torch_npu", "gbs")
     keys = [k for k in sorted(ours) if k in vendor]
     ratio = [ours[k] / vendor[k] for k in keys]
@@ -144,7 +144,12 @@ def ratio_panel(axis, med, xlabel):
     axis.set_ylim(0, max(ratio) * 1.25)
     axis.set_xlabel(xlabel)
     axis.set_ylabel("ours / torch_npu")
-    axis.set_title("apples-to-apples: both allocating outputs", fontsize=10)
+    axis.set_title(
+        "ours preallocated / torch_npu allocating"
+        if arm == "raw"
+        else "apples-to-apples: both allocating outputs",
+        fontsize=10,
+    )
     axis.grid(axis="y", alpha=0.25)
 
 
@@ -155,6 +160,17 @@ def main():
     parser.add_argument("--axis", choices=["k", "batch"], default="k")
     parser.add_argument(
         "--keys", default="", help="comma list overriding the axis ticks"
+    )
+    parser.add_argument(
+        "--arm",
+        choices=["raw", "api"],
+        default="api",
+        help="which of our arms to compare: raw is preallocated, api allocates",
+    )
+    parser.add_argument(
+        "--title",
+        default="mxfp4_quant_a5 on Ascend A5 (dav-c310) — bf16 → MXFP4 vs torch_npu",
+        help="figure title; the part and toolchain belong to the data",
     )
     args = parser.parse_args()
     if plt is None:
@@ -184,15 +200,14 @@ def main():
         xlabel,
         (
             ("api", "ours", "ours (allocating)", OURS, "-o"),
+            ("raw", "ours_raw", "ours (preallocated)", OURS, "--"),
             ("api", "torch_npu", "torch_npu (allocating)", VENDOR, "-s"),
         ),
         "bf16 → MXFP4 bandwidth"
         + (f", batch {max(int(r['batch']) for r in rows):,}" if args.axis == "k" else ""),
     )
-    ratio_panel(right, med, xlabel)
-    figure.suptitle(
-        "mxfp4_quant_a5 on Ascend A5 (dav-c310) — bf16 → MXFP4 vs torch_npu",
-    )
+    ratio_panel(right, med, xlabel, args.arm)
+    figure.suptitle(args.title)
     figure.text(
         0.5,
         0.9,
