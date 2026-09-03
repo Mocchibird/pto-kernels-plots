@@ -21,6 +21,26 @@ every figure from the CSVs beside it.
 Median PTO-ISA speedup over AscendC for Hadamard + Quant across batch size and row length.  
 Blue means PTO-ISA is faster, red means AscendC is faster, and each cell shows the measured speedup ratio.
 
+### Fused Hadamard + MXFP4 quantize on A5, two rotations
+
+![What fusing buys, and both kernels against the copy that bounds them](fused_hadamard_quant_a5/fusion_both_kernels.png)
+
+Two kernels, each fusing a Hadamard rotation with MXFP4 quantization into one
+launch: `fused_hadamard_quant_a5` rotates the whole row, ten powers of two from
+32 to 16384, and `fused_hadamard_quant_b32_a5` rotates independent 32-element
+blocks, 26 widths from 64 to 14336. Fusing is worth 2.45x and 2.53x, and both
+land near a `torch_npu` copy of the same data at 1382-1477 GB/s, so the win is
+traffic and not throughput.
+
+![Whether a wider rotation quantizes better](fused_hadamard_quant_a5/rotation_width_error.png)
+
+Rotation width does not improve quantization error. Both rotations beat no
+rotation on data with outliers, 0.157 against 0.109, but the full row ties or
+loses against block-32 and loses more as K grows, because spreading an outlier
+across the whole row lifts every 32-block's shared scale instead of one block's.
+
+Each directory's `plot_*.py` regenerates its figures from the CSVs beside them.
+
 ### Matmul runtime comparison
 
 ![Runtime comparison for matmul swizzle experiment on 910B2](matmul_swizzle/comparison_910B2_stepsize_128.png)

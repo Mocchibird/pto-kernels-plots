@@ -1,0 +1,9 @@
+step,k,us,gbs,note
+single-phase chunked,4096,330.9,513,a whole row held across 16 register chunks
+two-phase,4096,178.9,949,"windows in registers, so K past 4096 builds"
+addressing rewritten,4096,126.9,1338,nested loops replace a per-slot index computation
+stages fused,4096,121.9,1394,three cross-window stages per UB pass
+single-phase chunked,16384,,,did not build: a row needs 64 chunks against 16 slots
+two-phase,16384,388.1,436,"windows in registers, so K past 4096 builds"
+addressing rewritten,16384,145.5,1168,nested loops replace a per-slot index computation
+stages fused,16384,125.7,1351,three cross-window stages per UB pass
