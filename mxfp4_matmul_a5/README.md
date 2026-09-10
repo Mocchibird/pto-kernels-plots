@@ -13,7 +13,7 @@ The device-to-device copy reference held at 1424-1435 GB/s throughout.
 | file | |
 |---|---|
 | `ours_over_vendor.png` | ours / `npu_quant_matmul`, 16 batches x 9 widths |
-| `ours_over_bf16.png` | ours / bf16 `torch.matmul`, cold L2 |
+| `ours_over_bf16.png` | ours / bf16 `torch.matmul` |
 | `vendor_over_bf16.png` | the vendor's own MXFP4 against the same bf16 arm |
 | `peak_throughput.png` | best TFLOP/s reached at any M, per width |
 | `s1..s3.csv`, `t1..t3.csv` | the six raw sweeps; two independent triples |

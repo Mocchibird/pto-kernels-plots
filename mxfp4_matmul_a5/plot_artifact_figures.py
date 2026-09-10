@@ -249,14 +249,14 @@ def main():
         (
             "vendor_vs_bf16",
             "vendor_over_bf16.png",
-            "torch_npu MXFP4 quant_matmul over bf16 torch.matmul, cold L2",
+            "torch_npu MXFP4 quant_matmul over bf16 torch.matmul",
             "bf16",
             "torch_npu",
         ),
         (
             "ours_vs_bf16",
             "ours_over_bf16.png",
-            "Our PTO-ISA MXFP4 kernel over bf16 torch.matmul, matmul only",
+            "Our PTO-ISA MXFP4 kernel over bf16 torch.matmul",
             "bf16",
             "ours",
         ),
