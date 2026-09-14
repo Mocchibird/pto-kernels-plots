@@ -1,24 +1,23 @@
 #!/usr/bin/env python3
-"""What fusing buys, for both kernels, against the copy that bounds them.
+"""What fusing buys, for both kernels: the same work as two launches, then one.
 
-Left, the fusion ladder: the same rotation and quantizer as two launches, then
-as one. Right, both kernels against a device-to-device copy of the same data, as
-a reference for what moving the bytes costs.
+One panel, one question. Each kernel contributes a pair of bars per width --
+the rotation and the quantizer as two launches, then the two fused into one --
+so the ratio above a fused bar is that kernel's own before-and-after, not a
+comparison between the kernels. They are separate kernels for separate uses,
+and this figure is not a race between them.
 
-Both panels are bars, and both are in microseconds, so a height on one reads
-the same way as a height on the other.
+Two widths are in the sweep because they are worth seeing, not because they are
+the headline, and both are marked on the axis:
 
-The right panel is the one that says the result is traffic and not throughput.
-Every arm reaches much the same bandwidth -- 1382-1450 GB/s, printed on each
-bar -- so neither kernel is moving bytes faster than a copy; both are moving
-fewer of them, 2.53 B/element against 4.00, and that is the whole of the 1.5x.
-Plotting the bandwidth instead would make the point badly: on a zero-based axis
-those five figures are one flat wall, which says "the same" but not "so the
-time is lower".
+  K = 32    launch-bound. A row is 0.5M elements at M=16384 and the fused arm's
+            13.6 us is the dispatch floor, so 2.14x is two launches against one
+            rather than anything about bytes.
+  K = 1024  cache-affected. The unfused intermediate is 2*M*k = 32 MB against a
+            128 MiB L2, so the unfused arm partly reads from cache, which
+            flatters the arm fusing is measured against.
 
-The copy is a reference and not a proven lower bound. It is a vendor kernel
-doing a simpler job, and nothing measured here shows it is optimal -- so read
-"faster than the copy" as what it says, and not as "at the hardware limit".
+The clean widths are 4096 and up, and those are the 2.45-2.54x.
 """
 
 import argparse
@@ -42,6 +41,10 @@ COPY = "#8a949b"
 INK = "#0f1519"
 GRID = "#d7dcdf"
 
+# widths whose ratio is not a traffic result; the axis says so rather than
+# leaving a reader to take 2.14x at face value
+CAVEAT = {32: "launch-bound", 1024: "cache-affected"}
+
 
 def read(p):
     with open(p, newline="", encoding="utf-8") as fh:
@@ -56,156 +59,119 @@ def main():
         print("matplotlib required", file=sys.stderr)
         return 1
 
-    full_l = read(HERE / "ladder_full.csv")
-    full_c = read(HERE / "copy_floor_full.csv")
-    b32_c = read(B32 / "copy_floor_b32.csv")
+    full = {int(r["k"]): r for r in read(HERE / "ladder_full.csv")}
+    b32 = {int(r["k"]): r for r in read(B32 / "ladder_b32.csv")}
+    widths = sorted(set(full) | set(b32))
+    xs = list(range(len(widths)))
 
-    fig, (ax, ax2) = plt.subplots(1, 2, figsize=(13.2, 5.3))
+    fig, ax = plt.subplots(figsize=(11.6, 5.8))
 
-    # --- left: the ladder, full-row kernel ---
-    ks = [int(r["k"]) for r in full_l]
-    xs = list(range(len(ks)))
-    bw = 0.36
-    two = [float(r["two_us"]) for r in full_l]
-    one = [float(r["fused_us"]) for r in full_l]
-    ax.bar(
-        [x - bw / 2 for x in xs],
-        two,
-        bw,
-        color=COPY,
-        alpha=0.75,
-        label="two launches: rotate, then quantize",
-        zorder=2,
-    )
-    ax.bar(
-        [x + bw / 2 for x in xs],
-        one,
-        bw,
-        color=FULL,
-        label="one launch: both fused",
-        zorder=2,
-    )
-    for x, a, b, r in zip(xs, two, one, full_l):
-        ax.annotate(
-            f"{a:.0f}",
-            (x - bw / 2, a),
-            textcoords="offset points",
-            xytext=(0, 4),
-            ha="center",
-            fontsize=8.5,
-            color=INK,
-        )
-        ax.annotate(
-            f"{b:.0f}",
-            (x + bw / 2, b),
-            textcoords="offset points",
-            xytext=(0, 16),
-            ha="center",
-            fontsize=8.5,
-            color=INK,
-        )
-        ax.annotate(
-            f"{float(r['vs_two']):.2f}x",
-            (x + bw / 2, b),
-            textcoords="offset points",
-            xytext=(0, 4),
-            ha="center",
-            fontsize=9,
-            color=FULL,
-            weight="medium",
-        )
+    w = 0.17
+    # A pair per kernel: tight inside a pair, a clear gap between pairs. Colour
+    # already says which kernel is which, so a width only one of them supports
+    # centres its pair under the tick instead of sitting off to one side.
+    BOTH = {"full": (-0.345, -0.17), "b32": (0.17, 0.345)}
+    LONE = (-0.0875, 0.0875)
+    lanes = [("full", full, FULL, "full-row rotation"), ("b32", b32, BLOCK, "block-32 rotation")]
+    seen = set()
+    for x, k in zip(xs, widths):
+        here = [ln for ln in lanes if k in ln[1]]
+        for tag, src, colour, name in here:
+            off_two, off_one = BOTH[tag] if len(here) == 2 else LONE
+            r = src[k]
+            two, one = float(r["two_us"]), float(r["fused_us"])
+            ax.bar(
+                x + off_two,
+                two,
+                w,
+                color=COPY,
+                alpha=0.75,
+                zorder=2,
+                label=None if "two" in seen else "two launches: rotate, then quantize",
+            )
+            seen.add("two")
+            ax.bar(
+                x + off_one,
+                one,
+                w,
+                color=colour,
+                zorder=2,
+                label=None if name in seen else f"one launch, fused: {name}",
+            )
+            seen.add(name)
+            ax.annotate(
+                f"{two:.0f}",
+                (x + off_two, two),
+                textcoords="offset points",
+                xytext=(0, 4),
+                ha="center",
+                fontsize=7.8,
+                color=INK,
+            )
+            ax.annotate(
+                f"{one:.0f}",
+                (x + off_one, one),
+                textcoords="offset points",
+                xytext=(0, 15),
+                ha="center",
+                fontsize=7.8,
+                color=INK,
+            )
+            ax.annotate(
+                f"{float(r['vs_two']):.2f}x",
+                (x + off_one, one),
+                textcoords="offset points",
+                xytext=(0, 4),
+                ha="center",
+                fontsize=8.6,
+                color=colour,
+                weight="medium",
+            )
+
     ax.set_xticks(xs)
-    ax.set_xticklabels([f"K = {k}" for k in ks], fontsize=9.5)
+    ax.set_xticklabels(
+        [f"K = {k}" + (f"\n({CAVEAT[k]})" if k in CAVEAT else "") for k in widths],
+        fontsize=9.5,
+    )
+    for lab, k in zip(ax.get_xticklabels(), widths):
+        if k in CAVEAT:
+            lab.set_color("#78878b")
+    ceiling = max(float(r["two_us"]) for m in (full, b32) for r in m.values())
     ax.set_ylabel("microseconds per launch")
-    ax.set_ylim(0, max(two) * 1.16)
-    ax.set_title("Fusing the pair, full-row rotation (M = 16384)", fontsize=12)
-    ax.legend(fontsize=9, loc="upper left", framealpha=0.95)
+    ax.set_ylim(0, ceiling * 1.16)
+    ax.set_title("Fusing the pair: one launch against two, M = 16384", fontsize=12.5)
+    # draw order is data order, so name the legend order explicitly
+    want = [
+        "two launches: rotate, then quantize",
+        "one launch, fused: full-row rotation",
+        "one launch, fused: block-32 rotation",
+    ]
+    handles, labels = ax.get_legend_handles_labels()
+    by = dict(zip(labels, handles))
+    ax.legend(
+        [by[t] for t in want if t in by],
+        [t for t in want if t in by],
+        fontsize=9,
+        loc="upper left",
+        framealpha=0.95,
+    )
     ax.grid(True, axis="y", color=GRID, lw=0.7, alpha=0.7, zorder=0)
     ax.set_axisbelow(True)
     ax.spines[["top", "right"]].set_visible(False)
 
-    # --- right: both kernels against the copy, as bars ---
-    # the two kernels support different widths, so the axis is categorical over
-    # their union and a width a kernel has no instantiation for simply has no bar
-    fullm = {int(r["k"]): r for r in full_c}
-    b32m = {int(r["k"]): r for r in b32_c}
-    widths = sorted(set(fullm) | set(b32m))
-    xs2 = list(range(len(widths)))
-    w2 = 0.285
-
-    def series(m, key):
-        return [float(m[k][key]) if k in m else None for k in widths]
-
-    # the copy is one reference op at every width; take it wherever it was run
-    copy_us = [
-        float((fullm.get(k) or b32m[k])["copy_us"]) if (k in fullm or k in b32m) else None
-        for k in widths
-    ]
-    arms = [
-        (series(fullm, "fused_us"), fullm, FULL, "full-row rotation", -w2),
-        (series(b32m, "fused_us"), b32m, BLOCK, "block-32 rotation", 0.0),
-        (copy_us, None, COPY, "torch_npu d2d copy", w2),
-    ]
-    for vals, src, colour, label, off in arms:
-        pos = [x + off for x, v in zip(xs2, vals) if v is not None]
-        hgt = [v for v in vals if v is not None]
-        keys = [k for k, v in zip(widths, vals) if v is not None]
-        ax2.bar(
-            pos,
-            hgt,
-            w2 * 0.92,  # a surface gap between adjacent bars
-            color=colour,
-            alpha=0.75 if src is None else 1.0,
-            label=label,
-            zorder=2,
-        )
-        for p_, v, k in zip(pos, hgt, keys):
-            # the copy carries its time only; a kernel bar also carries what it
-            # is worth against that copy, which is the whole point of the panel
-            ax2.annotate(
-                f"{v:.0f}",
-                (p_, v),
-                textcoords="offset points",
-                xytext=(0, 15 if src is not None else 4),
-                ha="center",
-                fontsize=8,
-                color=INK,
-            )
-            if src is not None:
-                ax2.annotate(
-                    f"{float(src[k]['vs_copy']):.2f}x",
-                    (p_, v),
-                    textcoords="offset points",
-                    xytext=(0, 4),
-                    ha="center",
-                    fontsize=8.2,
-                    color=colour,
-                    weight="medium",
-                )
-    ax2.set_xticks(xs2)
-    ax2.set_xticklabels([f"K = {k}" for k in widths], fontsize=9)
-    ax2.set_ylim(0, max(v for v in copy_us if v is not None) * 1.42)
-    ax2.set_xlabel("row width K   (64Mi elements per launch)", fontsize=9.5)
-    ax2.set_ylabel("microseconds per launch")
-    ax2.set_title("Both kernels beat a copy of the same data", fontsize=12)
-    ax2.legend(fontsize=9, loc="upper left", framealpha=0.95)
-    ax2.grid(True, axis="y", color=GRID, lw=0.7, alpha=0.7, zorder=0)
-    ax2.set_axisbelow(True)
-    ax2.spines[["top", "right"]].set_visible(False)
-
     fig.text(
         0.5,
-        0.016,
-        "Ascend950PR_9589 - both kernels bit-exact against their two-launch "
-        "reference at every width - bracket spread 1.0-5.2%\n"
-        "Every arm on the right reaches 1382-1450 GB/s: the kernels are not "
-        "moving bytes faster than the copy, they are moving fewer of them, "
-        "2.53 B/element against 4.00",
+        0.018,
+        "Ascend950PR_9589 - each ratio is that kernel against its own two-launch "
+        "reference, bit-exact at every width - bracket spread 1.0-17.7%\n"
+        "The two marked widths are not traffic results: at K = 32 the fused arm is "
+        "on the dispatch floor, and at K = 1024 the unfused intermediate fits L2. "
+        "The clean widths give 2.45-2.54x.",
         ha="center",
         fontsize=8.5,
         color="#78878b",
     )
-    fig.tight_layout(rect=(0, 0.065, 1, 1))
+    fig.tight_layout(rect=(0, 0.085, 1, 1))
     fig.savefig(args.out, dpi=150)
     print(f"wrote {args.out}")
     return 0
