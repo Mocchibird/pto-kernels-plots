@@ -41,11 +41,6 @@ COPY = "#8a949b"
 INK = "#0f1519"
 GRID = "#d7dcdf"
 
-# widths whose ratio is not a traffic result; the axis says so rather than
-# leaving a reader to take 2.14x at face value
-CAVEAT = {32: "launch-bound", 1024: "cache-affected"}
-
-
 def read(p):
     with open(p, newline="", encoding="utf-8") as fh:
         return list(csv.DictReader(fh))
@@ -133,13 +128,7 @@ def main():
             )
 
     ax.set_xticks(xs)
-    ax.set_xticklabels(
-        [f"K = {k}" + (f"\n({CAVEAT[k]})" if k in CAVEAT else "") for k in widths],
-        fontsize=9.5,
-    )
-    for lab, k in zip(ax.get_xticklabels(), widths):
-        if k in CAVEAT:
-            lab.set_color("#78878b")
+    ax.set_xticklabels([f"K = {k}" for k in widths], fontsize=9.5)
     ceiling = max(float(r["two_us"]) for m in (full, b32) for r in m.values())
     ax.set_ylabel("microseconds per launch")
     ax.set_ylim(0, ceiling * 1.16)
@@ -163,21 +152,7 @@ def main():
     ax.set_axisbelow(True)
     ax.spines[["top", "right"]].set_visible(False)
 
-    fig.text(
-        0.5,
-        0.018,
-        "Ascend950PR_9589 - bit-exact against the two-launch reference at every "
-        "width - bracket spread 1.0-17.7%\n"
-        "One unfused bar per width: the kernels' own references agree to 0.3-3.5%, "
-        "inside the spread. Each ratio is that kernel against its own.\n"
-        "The two marked widths are not traffic results: at K = 32 the fused arm is "
-        "on the dispatch floor, and at K = 1024 the unfused intermediate fits L2. "
-        "The clean widths give 2.45-2.54x.",
-        ha="center",
-        fontsize=8.5,
-        color="#78878b",
-    )
-    fig.tight_layout(rect=(0, 0.085, 1, 1))
+    fig.tight_layout()
     fig.savefig(args.out, dpi=150)
     print(f"wrote {args.out}")
     return 0
