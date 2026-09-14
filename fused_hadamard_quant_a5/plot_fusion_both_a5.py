@@ -66,32 +66,45 @@ def main():
 
     fig, ax = plt.subplots(figsize=(11.6, 5.8))
 
-    w = 0.17
-    # A pair per kernel: tight inside a pair, a clear gap between pairs. Colour
-    # already says which kernel is which, so a width only one of them supports
-    # centres its pair under the tick instead of sitting off to one side.
-    BOTH = {"full": (-0.345, -0.17), "b32": (0.17, 0.345)}
-    LONE = (-0.0875, 0.0875)
-    lanes = [("full", full, FULL, "full-row rotation"), ("b32", b32, BLOCK, "block-32 rotation")]
+    w = 0.24
+    # One unfused bar per width, not one per kernel. Each kernel does have its
+    # own two-launch reference -- the rotations differ -- but they land within
+    # 0.3-3.5% of each other, under the bracket spread at every width, so two
+    # bars of the same height said nothing and cost half the figure. The bar is
+    # full-row's measurement where there is one, block-32's at K=32; every
+    # ratio is still that kernel against its own reference, as measured.
+    lanes = [("full", full, FULL, "full-row rotation"),
+             ("b32", b32, BLOCK, "block-32 rotation")]
     seen = set()
     for x, k in zip(xs, widths):
         here = [ln for ln in lanes if k in ln[1]]
-        for tag, src, colour, name in here:
-            off_two, off_one = BOTH[tag] if len(here) == 2 else LONE
+        ref = (full if k in full else b32)[k]
+        two = float(ref["two_us"])
+        offs = [-0.26, 0.0, 0.26] if len(here) == 2 else [-0.13, 0.13]
+        ax.bar(
+            x + offs[0],
+            two,
+            w,
+            color=COPY,
+            alpha=0.75,
+            zorder=2,
+            label=None if "two" in seen else "two launches: rotate, then quantize",
+        )
+        seen.add("two")
+        ax.annotate(
+            f"{two:.0f}",
+            (x + offs[0], two),
+            textcoords="offset points",
+            xytext=(0, 4),
+            ha="center",
+            fontsize=8,
+            color=INK,
+        )
+        for off, (tag, src, colour, name) in zip(offs[1:], here):
             r = src[k]
-            two, one = float(r["two_us"]), float(r["fused_us"])
+            one = float(r["fused_us"])
             ax.bar(
-                x + off_two,
-                two,
-                w,
-                color=COPY,
-                alpha=0.75,
-                zorder=2,
-                label=None if "two" in seen else "two launches: rotate, then quantize",
-            )
-            seen.add("two")
-            ax.bar(
-                x + off_one,
+                x + off,
                 one,
                 w,
                 color=colour,
@@ -100,30 +113,21 @@ def main():
             )
             seen.add(name)
             ax.annotate(
-                f"{two:.0f}",
-                (x + off_two, two),
-                textcoords="offset points",
-                xytext=(0, 4),
-                ha="center",
-                fontsize=7.8,
-                color=INK,
-            )
-            ax.annotate(
                 f"{one:.0f}",
-                (x + off_one, one),
+                (x + off, one),
                 textcoords="offset points",
                 xytext=(0, 15),
                 ha="center",
-                fontsize=7.8,
+                fontsize=8,
                 color=INK,
             )
             ax.annotate(
                 f"{float(r['vs_two']):.2f}x",
-                (x + off_one, one),
+                (x + off, one),
                 textcoords="offset points",
                 xytext=(0, 4),
                 ha="center",
-                fontsize=8.6,
+                fontsize=8.8,
                 color=colour,
                 weight="medium",
             )
@@ -162,8 +166,10 @@ def main():
     fig.text(
         0.5,
         0.018,
-        "Ascend950PR_9589 - each ratio is that kernel against its own two-launch "
-        "reference, bit-exact at every width - bracket spread 1.0-17.7%\n"
+        "Ascend950PR_9589 - bit-exact against the two-launch reference at every "
+        "width - bracket spread 1.0-17.7%\n"
+        "One unfused bar per width: the kernels' own references agree to 0.3-3.5%, "
+        "inside the spread. Each ratio is that kernel against its own.\n"
         "The two marked widths are not traffic results: at K = 32 the fused arm is "
         "on the dispatch floor, and at K = 1024 the unfused intermediate fits L2. "
         "The clean widths give 2.45-2.54x.",
