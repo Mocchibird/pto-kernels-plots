@@ -7,8 +7,8 @@ row grows: the transform is hidden under the DMA at every width, so the curve
 is flat rather than sloping.
 
 Rows x K is held constant across the sweep, so every point moves the same
-number of elements and the widths are directly comparable. The tick shows both
-sizes.
+number of elements and the widths are directly comparable; the per-width row
+counts are in the CSVs.
 
 The y axis is zero-based on purpose. Every point sits between 1382 and 1450
 GB/s, and the gap between the kernels is a few per cent; a cropped axis turns
@@ -90,15 +90,7 @@ def main():
     # ~1.4 TB/s across a 16x range of width is the actual finding.
     ax.set_ylim(0, 1600)
     ax.set_xticks(list(pos.values()))
-    # the batch is the size that actually changes per point: rows x K is held
-    # constant across the sweep, which is what makes the widths comparable
-    def batch_of(k):
-        r = full.get(k) or b32.get(k)
-        return int(r["batch"])
-
-    ax.set_xticklabels(
-        [f"K = {k}\n{batch_of(k):,} rows" for k in widths], fontsize=9.5
-    )
+    ax.set_xticklabels([f"K = {k}" for k in widths], fontsize=9.5)
     ax.set_xlim(-0.35, len(widths) - 0.65)
     ax.set_ylabel("achieved bandwidth (GB/s)")
     ax.set_title("Achieved bandwidth by row width", fontsize=12.5)
