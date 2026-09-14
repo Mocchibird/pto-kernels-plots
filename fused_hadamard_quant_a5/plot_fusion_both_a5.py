@@ -5,13 +5,20 @@ Left, the fusion ladder: the same rotation and quantizer as two launches, then
 as one. Right, both kernels against a device-to-device copy of the same data, as
 a reference for what moving the bytes costs.
 
+Both panels are bars, and both are in microseconds, so a height on one reads
+the same way as a height on the other.
+
 The right panel is the one that says the result is traffic and not throughput.
-Every curve reaches much the same bandwidth, so neither kernel is moving bytes
-faster than a copy; both are moving fewer of them, 2.53 B/element against 4.00.
+Every arm reaches much the same bandwidth -- 1382-1450 GB/s, printed on each
+bar -- so neither kernel is moving bytes faster than a copy; both are moving
+fewer of them, 2.53 B/element against 4.00, and that is the whole of the 1.5x.
+Plotting the bandwidth instead would make the point badly: on a zero-based axis
+those five figures are one flat wall, which says "the same" but not "so the
+time is lower".
 
 The copy is a reference and not a proven lower bound. It is a vendor kernel
 doing a simpler job, and nothing measured here shows it is optimal -- so read
-"near the copy" as what it says, and not as "at the hardware limit".
+"faster than the copy" as what it says, and not as "at the hardware limit".
 """
 
 import argparse
@@ -53,7 +60,7 @@ def main():
     full_c = read(HERE / "copy_floor_full.csv")
     b32_c = read(B32 / "copy_floor_b32.csv")
 
-    fig, (ax, ax2) = plt.subplots(1, 2, figsize=(12.6, 5.2))
+    fig, (ax, ax2) = plt.subplots(1, 2, figsize=(13.2, 5.3))
 
     # --- left: the ladder, full-row kernel ---
     ks = [int(r["k"]) for r in full_l]
@@ -117,73 +124,88 @@ def main():
     ax.set_axisbelow(True)
     ax.spines[["top", "right"]].set_visible(False)
 
-    # --- right: both kernels against the copy floor ---
+    # --- right: both kernels against the copy, as bars ---
     # the two kernels support different widths, so the axis is categorical over
-    # their union: on a log axis 14336 and 16384 print on top of each other
-    widths = sorted({int(r["k"]) for r in full_c} | {int(r["k"]) for r in b32_c})
-    pos = {k: i for i, k in enumerate(widths)}
-    fk = [pos[int(r["k"])] for r in full_c]
-    bk = [pos[int(r["k"])] for r in b32_c]
-    ax2.plot(
-        fk,
-        [float(r["fused_gbs"]) for r in full_c],
-        color=FULL,
-        lw=2.2,
-        marker="o",
-        ms=6.5,
-        label="full-row rotation",
-    )
-    ax2.plot(
-        bk,
-        [float(r["fused_gbs"]) for r in b32_c],
-        color=BLOCK,
-        lw=2.2,
-        marker="s",
-        ms=6.5,
-        label="block-32 rotation",
-    )
-    ax2.plot(
-        fk,
-        [float(r["copy_gbs"]) for r in full_c],
-        color=COPY,
-        lw=1.8,
-        ls="--",
-        marker="D",
-        ms=5,
-        label="torch_npu d2d copy",
-    )
-    ax2.axhline(1600, color=INK, lw=1.0, ls=":", alpha=0.55)
-    ax2.annotate(
-        "HBM peak 1600 GB/s",
-        (0, 1600),
-        textcoords="offset points",
-        xytext=(4, -13),
-        fontsize=8.5,
-        color=INK,
-        alpha=0.75,
-    )
-    ax2.set_xticks(list(pos.values()))
-    ax2.set_xticklabels([str(k) for k in widths], fontsize=9)
-    ax2.set_xlim(-0.3, len(widths) - 0.7)
-    ax2.set_ylim(0, 1750)
+    # their union and a width a kernel has no instantiation for simply has no bar
+    fullm = {int(r["k"]): r for r in full_c}
+    b32m = {int(r["k"]): r for r in b32_c}
+    widths = sorted(set(fullm) | set(b32m))
+    xs2 = list(range(len(widths)))
+    w2 = 0.285
+
+    def series(m, key):
+        return [float(m[k][key]) if k in m else None for k in widths]
+
+    # the copy is one reference op at every width; take it wherever it was run
+    copy_us = [
+        float((fullm.get(k) or b32m[k])["copy_us"]) if (k in fullm or k in b32m) else None
+        for k in widths
+    ]
+    arms = [
+        (series(fullm, "fused_us"), fullm, FULL, "full-row rotation", -w2),
+        (series(b32m, "fused_us"), b32m, BLOCK, "block-32 rotation", 0.0),
+        (copy_us, None, COPY, "torch_npu d2d copy", w2),
+    ]
+    for vals, src, colour, label, off in arms:
+        pos = [x + off for x, v in zip(xs2, vals) if v is not None]
+        hgt = [v for v in vals if v is not None]
+        keys = [k for k, v in zip(widths, vals) if v is not None]
+        ax2.bar(
+            pos,
+            hgt,
+            w2 * 0.92,  # a surface gap between adjacent bars
+            color=colour,
+            alpha=0.75 if src is None else 1.0,
+            label=label,
+            zorder=2,
+        )
+        for p_, v, k in zip(pos, hgt, keys):
+            # the copy carries its time only; a kernel bar also carries what it
+            # is worth against that copy, which is the whole point of the panel
+            ax2.annotate(
+                f"{v:.0f}",
+                (p_, v),
+                textcoords="offset points",
+                xytext=(0, 15 if src is not None else 4),
+                ha="center",
+                fontsize=8,
+                color=INK,
+            )
+            if src is not None:
+                ax2.annotate(
+                    f"{float(src[k]['vs_copy']):.2f}x",
+                    (p_, v),
+                    textcoords="offset points",
+                    xytext=(0, 4),
+                    ha="center",
+                    fontsize=8.2,
+                    color=colour,
+                    weight="medium",
+                )
+    ax2.set_xticks(xs2)
+    ax2.set_xticklabels([f"K = {k}" for k in widths], fontsize=9)
+    ax2.set_ylim(0, max(v for v in copy_us if v is not None) * 1.42)
     ax2.set_xlabel("row width K   (64Mi elements per launch)", fontsize=9.5)
-    ax2.set_ylabel("achieved bandwidth (GB/s)")
-    ax2.set_title("Both kernels run near a copy of the same data", fontsize=12)
-    ax2.legend(fontsize=9, loc="lower left", framealpha=0.95)
+    ax2.set_ylabel("microseconds per launch")
+    ax2.set_title("Both kernels beat a copy of the same data", fontsize=12)
+    ax2.legend(fontsize=9, loc="upper left", framealpha=0.95)
     ax2.grid(True, axis="y", color=GRID, lw=0.7, alpha=0.7, zorder=0)
     ax2.set_axisbelow(True)
     ax2.spines[["top", "right"]].set_visible(False)
 
     fig.text(
         0.5,
-        0.012,
+        0.016,
         "Ascend950PR_9589 - both kernels bit-exact against their two-launch "
-        "reference at every width - bracket spread 1.0-5.2%",
+        "reference at every width - bracket spread 1.0-5.2%\n"
+        "Every arm on the right reaches 1382-1450 GB/s: the kernels are not "
+        "moving bytes faster than the copy, they are moving fewer of them, "
+        "2.53 B/element against 4.00",
         ha="center",
         fontsize=8.5,
         color="#78878b",
     )
-    fig.tight_layout(rect=(0, 0.035, 1, 1))
+    fig.tight_layout(rect=(0, 0.065, 1, 1))
     fig.savefig(args.out, dpi=150)
     print(f"wrote {args.out}")
     return 0
