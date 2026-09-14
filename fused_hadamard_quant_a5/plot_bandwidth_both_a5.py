@@ -6,6 +6,10 @@ says what the fused kernel then sustains, and that it does not fall off as the
 row grows: the transform is hidden under the DMA at every width, so the curve
 is flat rather than sloping.
 
+Rows x K is held constant across the sweep, so every point moves the same
+number of elements and the widths are directly comparable. The tick shows both
+sizes.
+
 The y axis is zero-based on purpose. Every point sits between 1382 and 1450
 GB/s, and the gap between the kernels is a few per cent; a cropped axis turns
 that into a cliff it is not. Flat at ~1.4 TB/s across a 16x range of row width
@@ -52,10 +56,9 @@ def main():
 
     full = read(HERE / "copy_floor_full.csv")
     b32 = read(B32 / "copy_floor_b32.csv")
-    # K=32 is dropped: only block-32 has a measurement there, so it drew a
-    # lone marker and left the full-row line starting a width late.
-    MIN_K = 1024
-    widths = sorted(k for k in set(full) | set(b32) if k >= MIN_K)
+    # Both kernels are measured at every width, so there are no gaps and no
+    # width to drop.
+    widths = sorted(set(full) | set(b32))
     pos = {k: i for i, k in enumerate(widths)}
 
     fig, ax = plt.subplots(figsize=(10.4, 5.6))
@@ -87,13 +90,18 @@ def main():
     # ~1.4 TB/s across a 16x range of width is the actual finding.
     ax.set_ylim(0, 1600)
     ax.set_xticks(list(pos.values()))
-    ax.set_xticklabels([f"K = {k}" for k in widths], fontsize=9.5)
+    # the batch is the size that actually changes per point: rows x K is held
+    # constant across the sweep, which is what makes the widths comparable
+    def batch_of(k):
+        r = full.get(k) or b32.get(k)
+        return int(r["batch"])
+
+    ax.set_xticklabels(
+        [f"K = {k}\n{batch_of(k):,} rows" for k in widths], fontsize=9.5
+    )
     ax.set_xlim(-0.35, len(widths) - 0.65)
     ax.set_ylabel("achieved bandwidth (GB/s)")
-    ax.set_title(
-        "Achieved bandwidth by row width, 67 million elements per launch",
-        fontsize=12.5,
-    )
+    ax.set_title("Achieved bandwidth by row width", fontsize=12.5)
     ax.legend(fontsize=9.5, loc="lower right", framealpha=0.95)
     ax.grid(True, axis="y", color=GRID, lw=0.7, alpha=0.7, zorder=0)
     ax.set_axisbelow(True)
