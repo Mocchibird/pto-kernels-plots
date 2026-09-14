@@ -6,11 +6,10 @@ says what the fused kernel then sustains, and that it does not fall off as the
 row grows: the transform is hidden under the DMA at every width, so the curve
 is flat rather than sloping.
 
-NOTE ON THE Y AXIS. It runs 1300-1500 and does not start at zero. Every point
-sits between 1382 and 1450 GB/s, so a zero-based axis would draw two flat lines
-and show nothing. The limits are round and deliberately loose: block-32's step
-at K=4096 is 4.5%, and a tight crop draws that as a cliff. Read the gap as the
-few per cent it is, not as the height of the picture.
+The y axis is zero-based on purpose. Every point sits between 1382 and 1450
+GB/s, and the gap between the kernels is a few per cent; a cropped axis turns
+that into a cliff it is not. Flat at ~1.4 TB/s across a 16x range of row width
+is the finding -- the transform is hidden under the DMA at every width.
 
 No copy reference and no hardware ceiling here on purpose. The copy belongs to
 the traffic argument, which is the other figure's job, and the part's true peak
@@ -53,15 +52,20 @@ def main():
 
     full = read(HERE / "copy_floor_full.csv")
     b32 = read(B32 / "copy_floor_b32.csv")
-    widths = sorted(set(full) | set(b32))
+    # K=32 is dropped: only block-32 has a measurement there, so it drew a
+    # lone marker and left the full-row line starting a width late.
+    MIN_K = 1024
+    widths = sorted(k for k in set(full) | set(b32) if k >= MIN_K)
     pos = {k: i for i, k in enumerate(widths)}
 
     fig, ax = plt.subplots(figsize=(10.4, 5.6))
-    for src, colour, marker, name in [
-        (full, FULL, "o", "full-row rotation"),
-        (b32, BLOCK, "s", "block-32 rotation"),
+    # the two series sit within a few per cent, so their value labels collide
+    # on a zero-based axis; one goes above its line and the other below
+    for src, colour, marker, name, dy in [
+        (full, FULL, "o", "full-row rotation", -15),
+        (b32, BLOCK, "s", "block-32 rotation", 10),
     ]:
-        ks = sorted(src)
+        ks = [k for k in sorted(src) if k in pos]
         xs = [pos[k] for k in ks]
         ys = [float(src[k]["fused_gbs"]) for k in ks]
         # A marker is a measurement. Where a kernel has no instantiation at a
@@ -76,16 +80,16 @@ def main():
                 label=name, zorder=4)
         for x, y in zip(xs, ys):
             ax.annotate(f"{y:.0f}", (x, y), textcoords="offset points",
-                        xytext=(0, 9), ha="center", fontsize=8.5, color=colour)
+                        xytext=(0, dy), ha="center", fontsize=8.5, color=colour)
 
-    # Round, generous limits rather than a tight fit around the data. A tight
-    # crop turns block-32's 4.5% step at K=4096 into a cliff; this keeps the
-    # step visible without drawing it as an order of magnitude.
-    ax.set_ylim(1300, 1500)
+    # Zero-based. The differences between the kernels are a few per cent and
+    # a cropped axis magnifies them into something they are not; flat lines at
+    # ~1.4 TB/s across a 16x range of width is the actual finding.
+    ax.set_ylim(0, 1600)
     ax.set_xticks(list(pos.values()))
     ax.set_xticklabels([f"K = {k}" for k in widths], fontsize=9.5)
     ax.set_xlim(-0.35, len(widths) - 0.65)
-    ax.set_ylabel("achieved bandwidth (GB/s)  -- axis cropped, see note")
+    ax.set_ylabel("achieved bandwidth (GB/s)")
     ax.set_title(
         "Achieved bandwidth by row width, 67 million elements per launch",
         fontsize=12.5,
