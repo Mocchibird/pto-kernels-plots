@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
-"""Achieved bandwidth for both fused kernels, against the copy and HBM peak.
+"""Achieved bandwidth for both fused kernels, across row width.
 
-The companion to the fusion ladder. The ladder says fusing is worth 2.45-2.54x;
-this says why there is nothing much left after that. Every arm sits at 86-91%
-of the part's 1.6 TB/s HBM peak, so the kernels are not moving bytes faster
-than a vendor copy of the same data -- they are moving fewer of them, 2.53
-B/element against 4.00, and that is the whole of the time difference.
+The companion to the fusion ladder. The ladder says what fusing is worth; this
+says what the fused kernel then sustains, and that it does not fall off as the
+row grows: the transform is hidden under the DMA at every width, so the curve
+is flat rather than sloping.
 
-The copy is a reference for what moving the bytes costs, not a proven lower
-bound: it is a vendor kernel doing a simpler job. HBM peak is the closer thing
-to a real ceiling, which is why it is the line.
+NOTE ON THE Y AXIS. It runs 1300-1500 and does not start at zero. Every point
+sits between 1382 and 1450 GB/s, so a zero-based axis would draw two flat lines
+and show nothing. The limits are round and deliberately loose: block-32's step
+at K=4096 is 4.5%, and a tight crop draws that as a cliff. Read the gap as the
+few per cent it is, not as the height of the picture.
+
+No copy reference and no hardware ceiling here on purpose. The copy belongs to
+the traffic argument, which is the other figure's job, and the part's true peak
+bandwidth is not something these runs establish.
 """
 
 import argparse
@@ -29,10 +34,8 @@ HERE = Path(__file__).resolve().parent
 B32 = HERE.parent / "fused_hadamard_quant_b32_a5"
 FULL = "#1b6f8c"
 BLOCK = "#b4611a"
-COPY = "#8a949b"
 INK = "#0f1519"
 GRID = "#d7dcdf"
-HBM_PEAK = 1600.0  # GB/s on an Ascend950PR_9589
 
 
 def read(p):
@@ -51,57 +54,43 @@ def main():
     full = read(HERE / "copy_floor_full.csv")
     b32 = read(B32 / "copy_floor_b32.csv")
     widths = sorted(set(full) | set(b32))
-    xs = list(range(len(widths)))
+    pos = {k: i for i, k in enumerate(widths)}
 
-    fig, ax = plt.subplots(figsize=(11.6, 5.8))
-    w = 0.25
-    # three fixed slots per width: full-row, block-32, copy. The copy ran at
-    # every width, so the group is always anchored and the tick stays centred;
-    # a width one kernel has no instantiation for simply leaves its slot empty.
-    SLOT = {"full": -0.27, "b32": 0.0, "copy": 0.27}
-    lanes = [("full", full, FULL, "full-row rotation"),
-             ("b32", b32, BLOCK, "block-32 rotation")]
-    seen = set()
+    fig, ax = plt.subplots(figsize=(10.4, 5.6))
+    for src, colour, marker, name in [
+        (full, FULL, "o", "full-row rotation"),
+        (b32, BLOCK, "s", "block-32 rotation"),
+    ]:
+        ks = sorted(src)
+        xs = [pos[k] for k in ks]
+        ys = [float(src[k]["fused_gbs"]) for k in ks]
+        # A marker is a measurement. Where a kernel has no instantiation at a
+        # width the others cover, the span is drawn faint and dashed so the
+        # line cannot be read as a measured value there.
+        for i in range(len(xs) - 1):
+            gap = xs[i + 1] - xs[i] > 1
+            ax.plot(xs[i:i + 2], ys[i:i + 2], color=colour,
+                    lw=1.4 if gap else 2.2, ls=":" if gap else "-",
+                    alpha=0.45 if gap else 1.0, zorder=3)
+        ax.plot(xs, ys, color=colour, lw=0, marker=marker, ms=7,
+                label=name, zorder=4)
+        for x, y in zip(xs, ys):
+            ax.annotate(f"{y:.0f}", (x, y), textcoords="offset points",
+                        xytext=(0, 9), ha="center", fontsize=8.5, color=colour)
 
-    for x, k in zip(xs, widths):
-        for tag, src, colour, name in lanes:
-            if k not in src:
-                continue
-            v = float(src[k]["fused_gbs"])
-            ax.bar(x + SLOT[tag], v, w, color=colour, zorder=2,
-                   label=None if tag in seen else name)
-            seen.add(tag)
-            ax.annotate(f"{v:.0f}", (x + SLOT[tag], v), textcoords="offset points",
-                        xytext=(0, 15), ha="center", fontsize=8, color=INK)
-            ax.annotate(f"{100 * v / HBM_PEAK:.0f}%", (x + SLOT[tag], v),
-                        textcoords="offset points", xytext=(0, 4), ha="center",
-                        fontsize=8.6, color=colour, weight="medium")
-        # one reference copy per width, taken from whichever sweep ran it
-        cv = float((full if k in full else b32)[k]["copy_gbs"])
-        ax.bar(x + SLOT["copy"], cv, w, color=COPY, alpha=0.75, zorder=2,
-               label=None if "copy" in seen else "torch_npu d2d copy")
-        seen.add("copy")
-        ax.annotate(f"{cv:.0f}", (x + SLOT["copy"], cv), textcoords="offset points",
-                    xytext=(0, 4), ha="center", fontsize=8, color=INK)
-
-    ax.axhline(HBM_PEAK, color=INK, lw=1.1, ls=":", alpha=0.6, zorder=1)
-    ax.annotate(f"HBM peak {HBM_PEAK:.0f} GB/s", (len(widths) - 0.5, HBM_PEAK),
-                textcoords="offset points", xytext=(0, 6), ha="right",
-                fontsize=9, color=INK, alpha=0.75)
-
-    ax.set_xticks(xs)
+    # Round, generous limits rather than a tight fit around the data. A tight
+    # crop turns block-32's 4.5% step at K=4096 into a cliff; this keeps the
+    # step visible without drawing it as an order of magnitude.
+    ax.set_ylim(1300, 1500)
+    ax.set_xticks(list(pos.values()))
     ax.set_xticklabels([f"K = {k}" for k in widths], fontsize=9.5)
-    ax.set_ylabel("achieved bandwidth (GB/s)")
-    ax.set_ylim(0, HBM_PEAK * 1.26)
+    ax.set_xlim(-0.35, len(widths) - 0.65)
+    ax.set_ylabel("achieved bandwidth (GB/s)  -- axis cropped, see note")
     ax.set_title(
-        "Both kernels run at 86-91% of HBM peak, 67 million elements per launch",
+        "Achieved bandwidth by row width, 67 million elements per launch",
         fontsize=12.5,
     )
-    want = ["full-row rotation", "block-32 rotation", "torch_npu d2d copy"]
-    handles, labels = ax.get_legend_handles_labels()
-    by = dict(zip(labels, handles))
-    ax.legend([by[t] for t in want if t in by], [t for t in want if t in by],
-              fontsize=9, loc="upper left", framealpha=0.95, ncol=3)
+    ax.legend(fontsize=9.5, loc="lower right", framealpha=0.95)
     ax.grid(True, axis="y", color=GRID, lw=0.7, alpha=0.7, zorder=0)
     ax.set_axisbelow(True)
     ax.spines[["top", "right"]].set_visible(False)
